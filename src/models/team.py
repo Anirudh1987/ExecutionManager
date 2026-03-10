@@ -45,6 +45,10 @@ class TeamMember(BaseModel):
     is_active: bool = True
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
+    # Specialization and capacity
+    specializations: list[str] = Field(default_factory=list)  # ClauseType values
+    max_active_reviews: int = 10
+
     # Workload tracking
     active_reviews: int = 0
     completed_reviews: int = 0

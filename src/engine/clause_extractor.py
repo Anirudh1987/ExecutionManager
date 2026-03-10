@@ -1,71 +1,119 @@
-"""Decomposes raw contract text into atomic clauses using AI."""
+"""Decomposes raw contract text into atomic clauses using hierarchical parsing.
+
+Supports nested numbering patterns common in M&A contracts:
+  Article X → Section X.Y → X.Y.Z → (a) → (i)
+
+Also extracts defined terms and resolves cross-references between clauses.
+"""
 
 from __future__ import annotations
 
-import json
+import re
 import uuid
 from datetime import datetime
 
 from src.models.contract import Clause, ClauseType, Contract
 
 
-# Structural patterns that signal clause boundaries
-_SECTION_PATTERNS = [
-    "ARTICLE",
-    "SECTION",
-    "Article",
-    "Section",
+# Hierarchy patterns: (compiled regex, depth_level)
+HIERARCHY_PATTERNS = [
+    (re.compile(r'^ARTICLE\s+([IVXLC\d]+)\.?\s*', re.IGNORECASE), 0),
+    (re.compile(r'^Section\s+(\d+(?:\.\d+)*)\s*', re.IGNORECASE), 1),
+    (re.compile(r'^(\d+\.\d+\.\d+(?:\.\d+)*)\s'), 2),
+    (re.compile(r'^(\d+\.\d+)\s'), 1),
+    (re.compile(r'^(\d+)\.\s'), 0),
 ]
+
+# Patterns that indicate schedule/exhibit sections
+_SCHEDULE_PATTERN = re.compile(
+    r'^(Schedule|Exhibit|Annex|Appendix)\s+([A-Z\d]+)',
+    re.IGNORECASE,
+)
+
+# Pattern for defined terms: "Term" means... or "Term" shall mean...
+_DEFINED_TERM_PATTERN = re.compile(
+    r'"([A-Z][A-Za-z\s]+?)"\s+(?:means|shall mean|has the meaning)',
+)
+
+# Cross-reference patterns
+_CROSS_REF_PATTERNS = [
+    re.compile(r'(?:Section|Article)\s+(\d+(?:\.\d+)*)', re.IGNORECASE),
+    re.compile(r'(?:Schedule|Exhibit|Annex)\s+([A-Z\d]+)', re.IGNORECASE),
+]
+
+# Keyword-based header detection
+_SECTION_KEYWORDS = ["ARTICLE", "SECTION", "Article", "Section"]
 
 
 def extract_clauses(contract: Contract) -> list[Clause]:
-    """Split a contract into reviewable clauses.
+    """Split a contract into reviewable clauses using hierarchical parsing.
 
-    Uses a hybrid approach:
-    1. Structural splitting on section headers
-    2. AI-based classification of each section's clause type
-
-    For the initial implementation, we use structural splitting.
-    The AI classification step is handled by the analyzer.
+    1. Extract defined terms from the full text
+    2. Parse hierarchical structure (Articles > Sections > Subsections)
+    3. Classify each clause by type
+    4. Resolve cross-references between clauses
+    5. Tag defined terms used in each clause
     """
     if not contract.raw_text:
         return []
 
+    # Step 1: Extract defined terms
+    contract.defined_terms = _extract_defined_terms(contract.raw_text)
+
+    # Step 2: Hierarchical section parsing
     sections = _split_into_sections(contract.raw_text)
     clauses = []
+    parent_stack: list[tuple[int, str]] = []  # (depth, clause_id)
 
-    for i, (title, text) in enumerate(sections):
+    for i, (title, text, depth) in enumerate(sections):
+        # Determine parent from the stack
+        while parent_stack and parent_stack[-1][0] >= depth:
+            parent_stack.pop()
+        parent_id = parent_stack[-1][1] if parent_stack else None
+
         clause = Clause(
             contract_id=contract.id,
             clause_type=_infer_clause_type(title, text),
             title=title,
             text=text,
             section_reference=title,
+            depth=depth,
+            parent_clause_id=parent_id,
             page_number=_estimate_page(i, len(sections), contract.page_count),
+            defined_terms_used=_find_used_defined_terms(
+                text, contract.defined_terms
+            ),
         )
         clauses.append(clause)
+        parent_stack.append((depth, clause.id))
 
-    # Link related clauses (e.g., indemnification references reps & warranties)
+    # Step 3: Resolve cross-references
     _link_related_clauses(clauses)
 
     return clauses
 
 
-def _split_into_sections(text: str) -> list[tuple[str, str]]:
-    """Split contract text into (title, body) pairs at section boundaries."""
+def _split_into_sections(text: str) -> list[tuple[str, str, int]]:
+    """Split contract text into (title, body, depth) triples.
+
+    Uses hierarchical pattern matching to determine nesting depth.
+    """
     lines = text.split("\n")
-    sections: list[tuple[str, str]] = []
+    sections: list[tuple[str, str, int]] = []
     current_title = "Preamble"
+    current_depth = 0
     current_body: list[str] = []
 
     for line in lines:
         stripped = line.strip()
-        if _is_section_header(stripped):
+        header_depth = _detect_header(stripped)
+        if header_depth is not None:
             if current_body:
                 body_text = "\n".join(current_body).strip()
                 if body_text:
-                    sections.append((current_title, body_text))
+                    sections.append((current_title, body_text, current_depth))
             current_title = stripped
+            current_depth = header_depth
             current_body = []
         else:
             current_body.append(line)
@@ -74,23 +122,70 @@ def _split_into_sections(text: str) -> list[tuple[str, str]]:
     if current_body:
         body_text = "\n".join(current_body).strip()
         if body_text:
-            sections.append((current_title, body_text))
+            sections.append((current_title, body_text, current_depth))
 
     return sections
 
 
-def _is_section_header(line: str) -> bool:
-    """Check if a line looks like a section/article header."""
+def _detect_header(line: str) -> int | None:
+    """Detect if a line is a section header and return its depth level.
+
+    Returns None if not a header, or depth (0=Article, 1=Section, 2+=subsection).
+    """
     if not line:
-        return False
-    for pattern in _SECTION_PATTERNS:
-        if line.startswith(pattern):
-            return True
-    # Numbered sections like "1.", "1.1", "2.3.1"
+        return None
+
+    # Check schedule/exhibit headers
+    if _SCHEDULE_PATTERN.match(line):
+        return 0
+
+    # Check hierarchical patterns
+    for pattern, depth in HIERARCHY_PATTERNS:
+        if pattern.match(line):
+            return depth
+
+    # Check keyword-based headers
+    for kw in _SECTION_KEYWORDS:
+        if line.startswith(kw):
+            if kw.lower().startswith("article"):
+                return 0
+            return 1
+
+    # Numbered sections like "1." at the start of a short line
     parts = line.split(".", 1)
     if parts[0].strip().isdigit() and len(line) < 200:
-        return True
-    return False
+        return 0
+
+    return None
+
+
+def _extract_defined_terms(text: str) -> dict[str, str]:
+    """Extract defined terms and their definitions from contract text."""
+    terms: dict[str, str] = {}
+    for match in _DEFINED_TERM_PATTERN.finditer(text):
+        term_name = match.group(1).strip()
+        # Grab the rest of the sentence as the definition
+        start = match.end()
+        snippet = text[start:start + 500]
+        for delim in [". ", ";\n", ".\n"]:
+            idx = snippet.find(delim)
+            if idx != -1:
+                snippet = snippet[:idx + 1]
+                break
+        terms[term_name] = snippet.strip()
+    return terms
+
+
+def _find_used_defined_terms(
+    text: str, defined_terms: dict[str, str]
+) -> list[str]:
+    """Find which defined terms are referenced in a clause's text."""
+    used = []
+    text_lower = text.lower()
+    for term in defined_terms:
+        if term.lower() in text_lower:
+            used.append(term)
+    return used
 
 
 def _infer_clause_type(title: str, text: str) -> ClauseType:
@@ -169,14 +264,36 @@ def _estimate_page(section_index: int, total_sections: int, page_count: int) -> 
 
 
 def _link_related_clauses(clauses: list[Clause]) -> None:
-    """Detect cross-references between clauses and link them."""
-    clause_map = {c.section_reference.lower(): c.id for c in clauses}
+    """Detect cross-references between clauses and link them.
+
+    Uses regex to find Section X.Y, Article X, Schedule X references
+    and maps them to actual clause IDs.
+    """
+    # Build lookup: section_reference (lowercase) -> clause_id
+    ref_to_id: dict[str, str] = {}
+    for clause in clauses:
+        ref_to_id[clause.section_reference.lower()] = clause.id
+        # Also index by extracted numbers (e.g., "3.1" from "Section 3.1 ...")
+        for pattern, _ in HIERARCHY_PATTERNS:
+            m = pattern.match(clause.section_reference)
+            if m:
+                ref_to_id[m.group(1).lower()] = clause.id
+                break
 
     for clause in clauses:
-        text_lower = clause.text.lower()
-        for ref, clause_id in clause_map.items():
+        text = clause.text
+        for ref_pattern in _CROSS_REF_PATTERNS:
+            for match in ref_pattern.finditer(text):
+                ref_key = match.group(1).lower()
+                target_id = ref_to_id.get(ref_key)
+                if target_id and target_id != clause.id:
+                    if target_id not in clause.related_clause_ids:
+                        clause.related_clause_ids.append(target_id)
+
+        # Fallback: simple substring matching for section references
+        text_lower = text.lower()
+        for ref, clause_id in ref_to_id.items():
             if clause_id == clause.id:
                 continue
-            # Simple cross-reference detection
-            if ref and ref in text_lower:
+            if ref and ref in text_lower and clause_id not in clause.related_clause_ids:
                 clause.related_clause_ids.append(clause_id)

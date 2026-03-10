@@ -129,7 +129,29 @@ class CrossClausePattern(BaseModel):
     description: str
     clauses_involved: list[str] = Field(default_factory=list)  # clause IDs
     risk_level: RiskLevel = RiskLevel.MEDIUM
+    interaction_score: float = 0.0  # 0=no issue, 1=severe mismatch
+    evidence: list[str] = Field(default_factory=list)  # supporting text excerpts
     recommendation: str = ""
+
+
+class ReviewBatch(BaseModel):
+    """A group of related clause reviews assigned together for context continuity."""
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    clause_review_ids: list[str] = Field(default_factory=list)
+    priority: int = 0  # lower = higher priority
+    rationale: str = ""
+    assigned_to: str | None = None
+
+
+class DealContext(BaseModel):
+    """Business context that influences risk assessment."""
+
+    deal_value: float | None = None
+    deal_type: str = ""  # acquisition, merger, asset purchase, etc.
+    client_side: str = "buyer"  # buyer or seller
+    jurisdiction: str = ""
+    industry: str = ""
 
 
 class Review(BaseModel):
@@ -140,6 +162,7 @@ class Review(BaseModel):
     deal_id: str
     clause_reviews: list[ClauseReview] = Field(default_factory=list)
     cross_clause_patterns: list[CrossClausePattern] = Field(default_factory=list)
+    batches: list[ReviewBatch] = Field(default_factory=list)
     started_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: datetime | None = None
 

@@ -47,7 +47,9 @@ class Clause(BaseModel):
     section_reference: str = ""
     page_number: int | None = None
     parent_clause_id: str | None = None  # for nested sub-clauses
+    depth: int = 0  # nesting level (Article=0, Section=1, subsection=2...)
     related_clause_ids: list[str] = Field(default_factory=list)
+    defined_terms_used: list[str] = Field(default_factory=list)
     extracted_at: datetime = Field(default_factory=datetime.utcnow)
 
     # AI-populated fields after analysis
@@ -71,6 +73,7 @@ class Contract(BaseModel):
     raw_text: str = ""
     clauses: list[Clause] = Field(default_factory=list)
     uploaded_at: datetime = Field(default_factory=datetime.utcnow)
+    defined_terms: dict[str, str] = Field(default_factory=dict)
     page_count: int = 0
     version: int = 1
     previous_version_id: str | None = None

@@ -26,6 +26,9 @@ class Deal(BaseModel):
     client_name: str
     deal_type: str = ""  # "acquisition", "merger", "divestiture", etc.
     deal_value: str = ""
+    client_side: str = "buyer"  # "buyer" or "seller" — changes risk perspective
+    industry: str = ""
+    jurisdiction: str = ""
     description: str = ""
     status: DealStatus = DealStatus.INTAKE
     contract_ids: list[str] = Field(default_factory=list)
