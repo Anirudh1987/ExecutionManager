@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
@@ -150,6 +152,48 @@ async def submit_verdict(
             if clause_review.final_risk_level
             else None
         ),
+    }
+
+
+@router.get("/{review_id}/cross-clause-patterns")
+async def cross_clause_patterns(review_id: str, request: Request):
+    """Get cross-clause risk patterns detected in this review."""
+    store = request.app.state.store
+    review = store.get_review(review_id)
+    return [
+        {
+            "id": p.id,
+            "pattern_type": p.pattern_type,
+            "title": p.title,
+            "description": p.description,
+            "risk_level": p.risk_level.value,
+            "clauses_involved": p.clauses_involved,
+            "recommendation": p.recommendation,
+        }
+        for p in review.cross_clause_patterns
+    ]
+
+
+@router.post("/{review_id}/clause/{clause_review_id}/start-review")
+async def start_clause_review(
+    review_id: str, clause_review_id: str, request: Request
+):
+    """Mark when a reviewer starts viewing a clause (for time tracking)."""
+    store = request.app.state.store
+    review = store.get_review(review_id)
+    cr = next(
+        (cr for cr in review.clause_reviews if cr.id == clause_review_id), None
+    )
+    if not cr:
+        return {"error": "Clause review not found"}
+
+    if not cr.human_started_at:
+        cr.human_started_at = datetime.utcnow()
+        store.save_review(review)
+
+    return {
+        "clause_review_id": cr.id,
+        "human_started_at": cr.human_started_at.isoformat(),
     }
 
 

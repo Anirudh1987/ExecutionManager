@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, UploadFile, File, Form
 from pydantic import BaseModel
 
 from src.models.contract import Contract
+from src.engine.pdf_parser import extract_text_from_pdf
+from src.engine.version_diff import compare_contracts
 
 router = APIRouter()
 
@@ -52,6 +54,84 @@ async def upload_contract(req: UploadContractRequest, request: Request):
         "critical_findings": review.critical_findings_count,
         "pending_human_reviews": len(review.pending_human_reviews),
         "progress": review.progress,
+    }
+
+
+@router.post("/upload-pdf", response_model=dict)
+async def upload_pdf(
+    request: Request,
+    deal_id: str = Form(...),
+    title: str = Form(""),
+    contract_type: str = Form(""),
+    file: UploadFile = File(...),
+):
+    """Upload a PDF contract, extract text, and start the review pipeline."""
+    store = request.app.state.store
+    pipeline = request.app.state.pipeline
+
+    pdf_bytes = await file.read()
+    raw_text, page_count = extract_text_from_pdf(pdf_bytes)
+
+    contract = Contract(
+        deal_id=deal_id,
+        filename=file.filename or "uploaded.pdf",
+        title=title or file.filename or "Untitled",
+        contract_type=contract_type,
+        raw_text=raw_text,
+        page_count=page_count,
+    )
+    store.save_contract(contract)
+
+    deal = store.get_deal(deal_id)
+    deal.contract_ids.append(contract.id)
+    store.save_deal(deal)
+
+    review = await pipeline.start_review(contract, deal)
+
+    return {
+        "contract_id": contract.id,
+        "review_id": review.id,
+        "pages_extracted": page_count,
+        "clauses_extracted": len(contract.clauses),
+        "critical_findings": review.critical_findings_count,
+        "pending_human_reviews": len(review.pending_human_reviews),
+        "progress": review.progress,
+    }
+
+
+@router.get("/{contract_id}/compare/{other_contract_id}")
+async def compare_contract_versions(
+    contract_id: str, other_contract_id: str, request: Request
+):
+    """Compare two contract versions and return a structured diff."""
+    store = request.app.state.store
+    old = store.get_contract(contract_id)
+    new = store.get_contract(other_contract_id)
+    diff = compare_contracts(old, new)
+    return {
+        "old_contract_id": diff.old_contract_id,
+        "new_contract_id": diff.new_contract_id,
+        "summary": diff.summary,
+        "added_count": len(diff.added_clauses),
+        "removed_count": len(diff.removed_clauses),
+        "modified_count": len(diff.modified_clauses),
+        "added_clauses": [
+            {"title": c.title, "clause_type": c.clause_type.value}
+            for c in diff.added_clauses
+        ],
+        "removed_clauses": [
+            {"title": c.title, "clause_type": c.clause_type.value}
+            for c in diff.removed_clauses
+        ],
+        "modified_clauses": [
+            {
+                "old_title": m.old_title,
+                "new_title": m.new_title,
+                "change_summary": m.change_summary,
+                "unified_diff": m.unified_diff,
+            }
+            for m in diff.modified_clauses
+        ],
     }
 
 

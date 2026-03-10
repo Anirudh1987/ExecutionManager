@@ -72,6 +72,8 @@ class Contract(BaseModel):
     clauses: list[Clause] = Field(default_factory=list)
     uploaded_at: datetime = Field(default_factory=datetime.utcnow)
     page_count: int = 0
+    version: int = 1
+    previous_version_id: str | None = None
 
     @property
     def clause_count(self) -> int:
@@ -79,3 +81,26 @@ class Contract(BaseModel):
 
     def clauses_by_type(self, clause_type: ClauseType) -> list[Clause]:
         return [c for c in self.clauses if c.clause_type == clause_type]
+
+
+class ClauseDiff(BaseModel):
+    """Diff between two versions of a clause."""
+
+    old_title: str
+    new_title: str
+    old_text: str
+    new_text: str
+    change_type: str  # "modified", "added", "removed"
+    unified_diff: str  # unified diff text
+    change_summary: str = ""
+
+
+class ContractDiff(BaseModel):
+    """Diff between two contract versions."""
+
+    old_contract_id: str
+    new_contract_id: str
+    added_clauses: list[Clause] = Field(default_factory=list)
+    removed_clauses: list[Clause] = Field(default_factory=list)
+    modified_clauses: list[ClauseDiff] = Field(default_factory=list)
+    summary: str = ""

@@ -88,6 +88,7 @@ class ClauseReview(BaseModel):
     assigned_to: str | None = None
     human_annotations: list[HumanAnnotation] = Field(default_factory=list)
     final_risk_level: RiskLevel | None = None
+    human_started_at: datetime | None = None  # when reviewer first opened
     human_completed_at: datetime | None = None
 
     # Timing
@@ -103,12 +104,32 @@ class ClauseReview(BaseModel):
         )
 
     @property
+    def review_duration_minutes(self) -> float | None:
+        """Time from reviewer opening the clause to submitting verdict."""
+        if self.human_started_at and self.human_completed_at:
+            delta = self.human_completed_at - self.human_started_at
+            return round(delta.total_seconds() / 60, 1)
+        return None
+
+    @property
     def is_complete(self) -> bool:
         if self.stage in (ReviewStage.APPROVED, ReviewStage.REVISION_REQUESTED):
             return True
         if self.stage == ReviewStage.AI_COMPLETE and not self.needs_human_review:
             return True
         return False
+
+
+class CrossClausePattern(BaseModel):
+    """A pattern detected across multiple clauses that creates risk."""
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    pattern_type: str  # e.g. "indemnification_vs_reps", "mac_vs_conditions"
+    title: str
+    description: str
+    clauses_involved: list[str] = Field(default_factory=list)  # clause IDs
+    risk_level: RiskLevel = RiskLevel.MEDIUM
+    recommendation: str = ""
 
 
 class Review(BaseModel):
@@ -118,6 +139,7 @@ class Review(BaseModel):
     contract_id: str
     deal_id: str
     clause_reviews: list[ClauseReview] = Field(default_factory=list)
+    cross_clause_patterns: list[CrossClausePattern] = Field(default_factory=list)
     started_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: datetime | None = None
 

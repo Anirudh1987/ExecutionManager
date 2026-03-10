@@ -43,6 +43,26 @@ async def reviewer_patterns(request: Request):
     return feedback.reviewer_patterns()
 
 
+@router.get("/time-estimates/{review_id}")
+async def time_estimates(review_id: str, request: Request):
+    """Predicted completion time for a review based on historical averages."""
+    store = request.app.state.store
+    time_tracker = request.app.state.time_tracker
+
+    review = store.get_review(review_id)
+    contract = store.get_contract(review.contract_id)
+    clauses_by_id = {c.id: c.clause_type for c in contract.clauses}
+
+    return time_tracker.estimate_deal_completion(review, clauses_by_id)
+
+
+@router.get("/review-times")
+async def review_times(request: Request):
+    """Average review time by clause type."""
+    time_tracker = request.app.state.time_tracker
+    return time_tracker.get_all_averages()
+
+
 @router.get("/summary")
 async def analytics_summary(request: Request):
     """Overall feedback loop health metrics."""

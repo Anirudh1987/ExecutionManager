@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Query
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel
 
 from src.models.deal import Deal, DealStatus
@@ -93,3 +94,27 @@ async def generate_advisory(deal_id: str, request: Request):
     deal.status = DealStatus.ADVISORY_DRAFTING
     store.save_deal(deal)
     return result
+
+
+@router.get("/{deal_id}/export")
+async def export_advisory(
+    deal_id: str,
+    request: Request,
+    format: str = Query("markdown", regex="^(markdown|html)$"),
+):
+    """Export advisory as Markdown or HTML document."""
+    store = request.app.state.store
+    advisory_gen = request.app.state.advisory
+    exporter = request.app.state.exporter
+
+    deal = store.get_deal(deal_id)
+    contracts = store.get_contracts_for_deal(deal_id)
+    reviews = store.get_reviews_for_deal(deal_id)
+    advisory_data = await advisory_gen.generate_advisory(deal, contracts, reviews)
+
+    if format == "html":
+        content = exporter.export_html(deal, advisory_data)
+        return HTMLResponse(content=content)
+    else:
+        content = exporter.export_markdown(deal, advisory_data)
+        return PlainTextResponse(content=content)

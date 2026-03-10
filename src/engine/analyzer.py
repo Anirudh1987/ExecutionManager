@@ -114,8 +114,9 @@ class ClauseAnalyzer:
     The framework here defines the analysis structure and scoring logic.
     """
 
-    def __init__(self, ai_client=None):
+    def __init__(self, ai_client=None, precedent_library=None):
         self._ai_client = ai_client
+        self._precedent_library = precedent_library
 
     async def analyze_clause(self, clause: Clause) -> ClauseReview:
         """Run full analysis on a clause and return a populated ClauseReview."""
@@ -129,6 +130,21 @@ class ClauseAnalyzer:
             findings = await self._ai_analyze(clause)
         else:
             findings = self._rule_based_analyze(clause)
+
+        # Enrich findings with precedent notes
+        if self._precedent_library:
+            precedents = self._precedent_library.find_precedents(
+                clause.clause_type,
+                keywords=clause.key_terms or [clause.title],
+            )
+            if precedents:
+                precedent_text = "; ".join(
+                    f"[{p.finding_category}] {p.revised_text[:100]}"
+                    for p in precedents[:3]
+                )
+                for finding in findings:
+                    if not finding.precedent_notes:
+                        finding.precedent_notes = f"Related precedents: {precedent_text}"
 
         review.ai_findings = findings
         review.ai_risk_level = self._aggregate_risk(findings)
