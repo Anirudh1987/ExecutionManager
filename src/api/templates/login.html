@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Login — ExecutionManager{% endblock %}
+
+{% block content %}
+<div style="max-width:400px;margin:60px auto;">
+  <div class="card">
+    <h2 class="mb-2">Sign In</h2>
+    <form id="loginForm">
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" name="email" required placeholder="you@lawfirm.com">
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" name="password" required>
+      </div>
+      <button type="submit" class="btn btn-primary" style="width:100%;">Login</button>
+    </form>
+    <div id="login-error" class="mt-1 text-sm" style="color:var(--critical);"></div>
+    <div class="mt-2 text-sm text-muted" style="text-align:center;">
+      No account? <a href="#" id="showRegister">Register</a>
+    </div>
+  </div>
+
+  <div class="card" id="registerCard" style="display:none;">
+    <h2 class="mb-2">Register</h2>
+    <form id="registerForm">
+      <div class="form-group">
+        <label>Name</label>
+        <input type="text" name="name" required placeholder="Full name">
+      </div>
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" name="email" required placeholder="you@lawfirm.com">
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" name="password" required minlength="6">
+      </div>
+      <div class="form-group">
+        <label>Role</label>
+        <select name="role">
+          <option value="strategist">Strategist (Senior Partner)</option>
+          <option value="analyst" selected>Analyst (Associate)</option>
+          <option value="coordinator">Coordinator (Junior)</option>
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary" style="width:100%;">Register</button>
+    </form>
+    <div id="register-error" class="mt-1 text-sm" style="color:var(--critical);"></div>
+  </div>
+</div>
+
+<script>
+document.getElementById('showRegister').addEventListener('click', (e) => {
+  e.preventDefault();
+  document.getElementById('registerCard').style.display = 'block';
+});
+
+document.getElementById('loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = new FormData(e.target);
+  try {
+    const resp = await fetch('/auth/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({email: form.get('email'), password: form.get('password')}),
+    });
+    const data = await resp.json();
+    if (resp.ok) {
+      localStorage.setItem('token', data.access_token);
+      localStorage.setItem('user', JSON.stringify(data));
+      window.location.href = '/app';
+    } else {
+      document.getElementById('login-error').textContent = data.detail || 'Login failed';
+    }
+  } catch (err) {
+    document.getElementById('login-error').textContent = 'Connection error';
+  }
+});
+
+document.getElementById('registerForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = new FormData(e.target);
+  try {
+    const resp = await fetch('/auth/register', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        name: form.get('name'), email: form.get('email'),
+        password: form.get('password'), role: form.get('role'),
+      }),
+    });
+    const data = await resp.json();
+    if (resp.ok) {
+      localStorage.setItem('token', data.access_token);
+      localStorage.setItem('user', JSON.stringify(data));
+      window.location.href = '/app';
+    } else {
+      document.getElementById('register-error').textContent = data.detail || 'Registration failed';
+    }
+  } catch (err) {
+    document.getElementById('register-error').textContent = 'Connection error';
+  }
+});
+</script>
+{% endblock %}

@@ -71,6 +71,7 @@ class ReviewPipeline:
         time_tracker: TimeTracker | None = None,
         risk_filter: PracticalRiskFilter | None = None,
         time_estimator: TimeEstimator | None = None,
+        ai_orchestrator=None,
         ws_manager=None,
     ):
         self._store = store
@@ -81,6 +82,7 @@ class ReviewPipeline:
         self._time_tracker = time_tracker
         self._risk_filter = risk_filter
         self._time_estimator = time_estimator or TimeEstimator()
+        self._ai_orchestrator = ai_orchestrator
         self._ws_manager = ws_manager
 
     async def start_review(
@@ -154,6 +156,30 @@ class ReviewPipeline:
                                 break
                     else:
                         cr.ai_risk_level = RiskLevel.INFORMATIONAL
+
+        # Step 3b+: AI agent enhancement — validate findings and draft revisions
+        if self._ai_orchestrator and self._ai_orchestrator.available:
+            for cr in all_clause_reviews:
+                clause = next((c for c in clauses if c.id == cr.clause_id), None)
+                if not clause or not cr.ai_findings:
+                    continue
+                for i, finding in enumerate(cr.ai_findings):
+                    if finding.suppressed:
+                        continue
+                    # Gate 6: AI validation of practical risk
+                    cr.ai_findings[i] = await self._ai_orchestrator.validate_finding_practical(
+                        finding, clause, context
+                    )
+                    # Draft suggested language for high/critical unsuppressed findings
+                    if not cr.ai_findings[i].suppressed and cr.ai_findings[i].risk_level in (
+                        RiskLevel.CRITICAL, RiskLevel.HIGH
+                    ):
+                        revision = await self._ai_orchestrator.draft_suggested_language(
+                            clause, cr.ai_findings[i], context,
+                            market_benchmark=cr.ai_findings[i].market_comparison,
+                        )
+                        if revision:
+                            cr.ai_findings[i].suggested_revision = revision
 
         # Step 3c: Round-aware — carry forward verdicts for unchanged clauses
         changed_clause_ids: set[str] | None = None

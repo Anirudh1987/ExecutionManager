@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block title %}{{ deal.name }} — ExecutionManager{% endblock %}
+
+{% block breadcrumb %}
+<div class="breadcrumb">
+  <a href="/app">Dashboard</a> &rsaquo; {{ deal.name }}
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="flex-between mb-2">
+  <div>
+    <h2>{{ deal.name }}</h2>
+    <div class="text-sm text-muted">
+      {{ deal.client_name }} &bull;
+      {{ deal.deal_type or 'N/A' }} &bull;
+      {{ deal.client_side }} perspective &bull;
+      {{ deal.jurisdiction or 'India' }}
+      {% if deal.deal_value %} &bull; {{ deal.deal_value }}{% endif %}
+    </div>
+  </div>
+  <div class="flex gap-1">
+    <span class="badge badge-status">{{ deal.status.value }}</span>
+    <a href="/deals/{{ deal.id }}/export?format=docx" class="btn btn-sm">Export DOCX</a>
+  </div>
+</div>
+
+<!-- Stats -->
+<div class="card">
+  <div class="grid grid-4">
+    <div class="stat">
+      <div class="stat-value">{{ contracts | length }}</div>
+      <div class="stat-label">Contracts</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value">{{ reviews | length }}</div>
+      <div class="stat-label">Reviews</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value">{{ team | length }}</div>
+      <div class="stat-label">Team Members</div>
+    </div>
+    <div class="stat">
+      {% set total_findings = namespace(count=0) %}
+      {% for r in reviews %}
+        {% for cr in r.clause_reviews %}
+          {% if cr.ai_risk_level.value == 'critical' %}
+            {% set total_findings.count = total_findings.count + 1 %}
+          {% endif %}
+        {% endfor %}
+      {% endfor %}
+      <div class="stat-value" style="color:var(--critical);">{{ total_findings.count }}</div>
+      <div class="stat-label">Critical Findings</div>
+    </div>
+  </div>
+</div>
+
+<!-- Upload Contract -->
+<div class="card">
+  <div class="card-header">
+    <h3>Upload Contract</h3>
+  </div>
+  <form action="/contracts/upload-file" method="post" enctype="multipart/form-data"
+        onsubmit="setTimeout(()=>window.location.reload(),1000)">
+    <input type="hidden" name="deal_id" value="{{ deal.id }}">
+    <div class="grid grid-3">
+      <div class="form-group">
+        <label>Contract File (PDF or DOCX)</label>
+        <input type="file" name="file" accept=".pdf,.docx,.doc,.txt" required>
+      </div>
+      <div class="form-group">
+        <label>Title</label>
+        <input type="text" name="title" placeholder="e.g., Share Purchase Agreement">
+      </div>
+      <div class="form-group">
+        <label>Type</label>
+        <select name="contract_type">
+          <option value="">Auto-detect</option>
+          <option value="SHA">Shareholders Agreement</option>
+          <option value="SPA">Share Purchase Agreement</option>
+          <option value="APA">Asset Purchase Agreement</option>
+          <option value="SSA">Share Subscription Agreement</option>
+        </select>
+      </div>
+    </div>
+    <button type="submit" class="btn btn-primary">Upload & Analyze</button>
+  </form>
+</div>
+
+<!-- Team -->
+{% if team %}
+<div class="card">
+  <div class="card-header">
+    <h3>Review Team</h3>
+  </div>
+  <table>
+    <thead>
+      <tr><th>Name</th><th>Role</th><th>Active Reviews</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+      {% for member in team %}
+      <tr>
+        <td>{{ member.name }}</td>
+        <td><span class="badge badge-status">{{ member.role.value }}</span></td>
+        <td>{{ member.active_reviews }}</td>
+        <td>{% if member.is_active %}Active{% else %}Inactive{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="card">
+  <div class="flex-between">
+    <div>
+      <h3>No team assigned</h3>
+      <p class="text-sm text-muted">Assign team members to start human review.</p>
+    </div>
+    <form hx-post="/deals/{{ deal.id }}/assign-team" hx-target="body" hx-swap="none"
+          onsubmit="setTimeout(()=>window.location.reload(),500)">
+      <button type="submit" class="btn btn-primary">Assign All Team Members</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+<!-- Reviews -->
+{% if reviews %}
+<h3 class="mt-2 mb-1">Contract Reviews</h3>
+{% for review in reviews %}
+{% set contract = None %}
+{% for c in contracts %}
+  {% if c.id == review.contract_id %}
+    {% set contract = c %}
+  {% endif %}
+{% endfor %}
+<a href="/app/review/{{ review.id }}" class="card" style="text-decoration:none;color:inherit;display:block;">
+  <div class="card-header">
+    <h3>{% if contract %}{{ contract.title }}{% else %}Review{% endif %}</h3>
+    <div>
+      <span class="badge badge-status">{{ '%.0f' | format(review.progress * 100) }}% complete</span>
+      {% if review.critical_findings_count > 0 %}
+      <span class="badge badge-critical">{{ review.critical_findings_count }} critical</span>
+      {% endif %}
+    </div>
+  </div>
+  <div class="progress-bar">
+    <div class="progress-fill" style="width:{{ (review.progress * 100) | int }}%"></div>
+  </div>
+  <div class="text-sm text-muted mt-1">
+    {{ review.clause_reviews | length }} clauses &bull;
+    {{ review.pending_human_reviews | length }} pending review &bull;
+    {{ review.cross_clause_patterns | length }} cross-clause patterns
+  </div>
+</a>
+{% endfor %}
+{% endif %}
+{% endblock %}

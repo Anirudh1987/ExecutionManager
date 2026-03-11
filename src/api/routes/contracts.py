@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from src.models.contract import Contract
 from src.engine.pdf_parser import extract_text_from_pdf
+from src.engine.docx_parser import extract_text_from_docx
 from src.engine.version_diff import compare_contracts
 
 router = APIRouter()
@@ -82,6 +83,103 @@ async def upload_pdf(
         contract_type=contract_type,
         raw_text=raw_text,
         page_count=page_count,
+    )
+    store.save_contract(contract)
+
+    deal = store.get_deal(deal_id)
+    deal.contract_ids.append(contract.id)
+    store.save_deal(deal)
+
+    review = await pipeline.start_review(contract, deal)
+
+    return {
+        "contract_id": contract.id,
+        "review_id": review.id,
+        "pages_extracted": page_count,
+        "clauses_extracted": len(contract.clauses),
+        "critical_findings": review.critical_findings_count,
+        "pending_human_reviews": len(review.pending_human_reviews),
+        "progress": review.progress,
+    }
+
+
+@router.post("/upload-docx", response_model=dict)
+async def upload_docx(
+    request: Request,
+    deal_id: str = Form(...),
+    title: str = Form(""),
+    contract_type: str = Form(""),
+    previous_version_id: str = Form(""),
+    file: UploadFile = File(...),
+):
+    """Upload a DOCX contract, extract text, and start the review pipeline."""
+    store = request.app.state.store
+    pipeline = request.app.state.pipeline
+
+    docx_bytes = await file.read()
+    raw_text, page_count = extract_text_from_docx(docx_bytes)
+
+    contract = Contract(
+        deal_id=deal_id,
+        filename=file.filename or "uploaded.docx",
+        title=title or file.filename or "Untitled",
+        contract_type=contract_type,
+        raw_text=raw_text,
+        page_count=page_count,
+        previous_version_id=previous_version_id or None,
+    )
+    store.save_contract(contract)
+
+    deal = store.get_deal(deal_id)
+    deal.contract_ids.append(contract.id)
+    store.save_deal(deal)
+
+    review = await pipeline.start_review(contract, deal)
+
+    return {
+        "contract_id": contract.id,
+        "review_id": review.id,
+        "pages_extracted": page_count,
+        "clauses_extracted": len(contract.clauses),
+        "critical_findings": review.critical_findings_count,
+        "pending_human_reviews": len(review.pending_human_reviews),
+        "progress": review.progress,
+    }
+
+
+@router.post("/upload-file", response_model=dict)
+async def upload_file(
+    request: Request,
+    deal_id: str = Form(...),
+    title: str = Form(""),
+    contract_type: str = Form(""),
+    previous_version_id: str = Form(""),
+    file: UploadFile = File(...),
+):
+    """Upload any supported file (PDF or DOCX), auto-detect format."""
+    filename = file.filename or ""
+    file_bytes = await file.read()
+
+    if filename.lower().endswith(".docx"):
+        raw_text, page_count = extract_text_from_docx(file_bytes)
+    elif filename.lower().endswith(".pdf"):
+        raw_text, page_count = extract_text_from_pdf(file_bytes)
+    else:
+        # Try as plain text
+        raw_text = file_bytes.decode("utf-8", errors="replace")
+        page_count = max(1, len(raw_text) // 3000)
+
+    store = request.app.state.store
+    pipeline = request.app.state.pipeline
+
+    contract = Contract(
+        deal_id=deal_id,
+        filename=filename,
+        title=title or filename or "Untitled",
+        contract_type=contract_type,
+        raw_text=raw_text,
+        page_count=page_count,
+        previous_version_id=previous_version_id or None,
     )
     store.save_contract(contract)
 

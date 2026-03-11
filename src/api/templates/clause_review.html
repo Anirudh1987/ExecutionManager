@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+{% block title %}{{ clause.title if clause else 'Clause' }} — ExecutionManager{% endblock %}
+
+{% block breadcrumb %}
+<div class="breadcrumb">
+  <a href="/app">Dashboard</a> &rsaquo;
+  <a href="/app/deal/{{ deal.id }}">{{ deal.name }}</a> &rsaquo;
+  <a href="/app/review/{{ review.id }}">{{ contract.title }}</a> &rsaquo;
+  {{ clause.title[:50] if clause else 'Clause' }}
+</div>
+{% endblock %}
+
+{% block content %}
+{% if clause_review and clause %}
+<div class="flex-between mb-2">
+  <div>
+    <h2>{{ clause.title }}</h2>
+    <div class="text-sm text-muted">
+      {{ clause.clause_type.value }} &bull;
+      Section {{ clause.section_reference or 'N/A' }} &bull;
+      AI Confidence: {{ '%.0f' | format(clause_review.ai_confidence * 100) }}%
+    </div>
+  </div>
+  <div>
+    <span class="badge badge-{{ clause_review.ai_risk_level.value }}" style="font-size:0.9rem;padding:4px 12px;">
+      {{ clause_review.ai_risk_level.value | upper }}
+    </span>
+    <span class="badge badge-status" style="margin-left:4px;">{{ clause_review.stage.value }}</span>
+  </div>
+</div>
+
+<div class="grid grid-2">
+  <!-- Left: Clause Text -->
+  <div>
+    <div class="card">
+      <h3 class="mb-1">Contract Text</h3>
+      <div class="clause-text">{{ clause.text }}</div>
+      {% if clause.key_terms %}
+      <div class="mt-1 text-sm text-muted">
+        <strong>Key terms:</strong> {{ clause.key_terms | join(', ') }}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Right: Findings + Verdict -->
+  <div>
+    <!-- AI Findings -->
+    <div class="card">
+      <h3 class="mb-1">AI Findings ({{ clause_review.ai_findings | length }})</h3>
+      {% if clause_review.ai_summary %}
+      <p class="text-sm text-muted mb-1">{{ clause_review.ai_summary }}</p>
+      {% endif %}
+
+      {% for finding in clause_review.ai_findings %}
+      <div class="finding finding-{{ finding.risk_level.value }}" id="finding-{{ finding.id }}">
+        <div class="flex-between">
+          <h4>{{ finding.title }}</h4>
+          <span class="badge badge-{{ finding.risk_level.value }}">{{ finding.risk_level.value }}</span>
+        </div>
+        <p>{{ finding.description }}</p>
+        {% if finding.market_comparison %}
+        <div class="market-comparison">{{ finding.market_comparison }}</div>
+        {% endif %}
+        {% if finding.suggested_revision %}
+        <div class="suggested-revision">
+          <strong>Suggested revision:</strong><br>
+          {{ finding.suggested_revision }}
+        </div>
+        {% endif %}
+        {% if finding.suppressed %}
+        <div class="text-sm mt-1" style="color:var(--low);">
+          Suppressed: {{ finding.suppression_reason }}
+        </div>
+        {% endif %}
+        {% if finding.ai_validation_reasoning %}
+        <div class="text-sm mt-1" style="color:var(--info);">
+          AI validation: {{ finding.ai_validation_reasoning }}
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+
+      {% if not clause_review.ai_findings %}
+      <p class="text-sm text-muted">No findings for this clause.</p>
+      {% endif %}
+    </div>
+
+    <!-- Previous Annotations -->
+    {% if clause_review.human_annotations %}
+    <div class="card">
+      <h3 class="mb-1">Previous Annotations</h3>
+      {% for ann in clause_review.human_annotations %}
+      <div class="finding" style="border-left-color:var(--accent);">
+        <div class="flex-between">
+          <h4>{{ ann.verdict.value | upper }}</h4>
+          <span class="text-sm text-muted">{{ ann.reviewer_id[:8] }}</span>
+        </div>
+        {% if ann.comment %}<p>{{ ann.comment }}</p>{% endif %}
+        {% if ann.suggested_language %}
+        <div class="suggested-revision">{{ ann.suggested_language }}</div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Verdict Form -->
+    {% if not clause_review.is_complete %}
+    <div class="card">
+      <h3 class="mb-1">Submit Your Verdict</h3>
+      <form hx-post="/reviews/{{ review.id }}/clause/{{ clause_review.id }}/verdict"
+            hx-target="#verdict-result" hx-swap="innerHTML">
+        <input type="hidden" name="reviewer_id" value="current-user">
+
+        {% if clause_review.ai_findings %}
+        <div class="form-group">
+          <label>Finding</label>
+          <select name="finding_id">
+            <option value="">Overall clause verdict</option>
+            {% for f in clause_review.ai_findings %}
+            <option value="{{ f.id }}">{{ f.title[:60] }} ({{ f.risk_level.value }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% endif %}
+
+        <div class="form-group">
+          <label>Verdict</label>
+          <div class="verdict-options">
+            <input type="radio" name="verdict" value="agree" id="v-agree" required>
+            <label for="v-agree" class="btn btn-sm btn-success" style="color:white;">Agree</label>
+
+            <input type="radio" name="verdict" value="modify" id="v-modify">
+            <label for="v-modify" class="btn btn-sm btn-warning" style="color:white;">Modify</label>
+
+            <input type="radio" name="verdict" value="disagree" id="v-disagree">
+            <label for="v-disagree" class="btn btn-sm btn-danger" style="color:white;">Disagree</label>
+
+            <input type="radio" name="verdict" value="escalate" id="v-escalate">
+            <label for="v-escalate" class="btn btn-sm">Escalate</label>
+
+            <input type="radio" name="verdict" value="defer" id="v-defer">
+            <label for="v-defer" class="btn btn-sm">Defer</label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Revised Risk Level (optional)</label>
+          <select name="revised_risk_level">
+            <option value="">Keep AI assessment</option>
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+            <option value="informational">Informational</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Comment</label>
+          <textarea name="comment" placeholder="Your analysis or notes..."></textarea>
+        </div>
+
+        <div class="form-group">
+          <label>Suggested Contract Language (optional)</label>
+          <textarea name="suggested_language" placeholder="Draft revised clause text..."></textarea>
+        </div>
+
+        <button type="submit" class="btn btn-primary">Submit Verdict</button>
+      </form>
+
+      <div id="verdict-result" class="mt-1"></div>
+    </div>
+    {% else %}
+    <div class="card" style="background:#f0fdf4;">
+      <h3>Review Complete</h3>
+      <p class="text-sm">
+        Final risk: <span class="badge badge-{{ clause_review.final_risk_level.value if clause_review.final_risk_level else 'informational' }}">
+          {{ clause_review.final_risk_level.value if clause_review.final_risk_level else 'N/A' }}
+        </span>
+      </p>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{% else %}
+<div class="empty-state">
+  <h3>Clause review not found</h3>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}ExecutionManager{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+</head>
+<body>
+  <header class="header">
+    <div class="container flex-between">
+      <div>
+        <a href="/app"><h1>ExecutionManager</h1></a>
+        <div class="subtitle">AI-Powered M&A Contract Review</div>
+      </div>
+      <div>
+        <a href="/app" class="btn btn-sm" style="color:white;border-color:rgba(255,255,255,0.3)">Dashboard</a>
+      </div>
+    </div>
+  </header>
+  <main class="container" style="padding-top:20px;padding-bottom:40px;">
+    {% block breadcrumb %}{% endblock %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

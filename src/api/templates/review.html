@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Review — {{ contract.title }} — ExecutionManager{% endblock %}
+
+{% block breadcrumb %}
+<div class="breadcrumb">
+  <a href="/app">Dashboard</a> &rsaquo;
+  <a href="/app/deal/{{ deal.id }}">{{ deal.name }}</a> &rsaquo;
+  {{ contract.title }}
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="flex-between mb-2">
+  <div>
+    <h2>{{ contract.title }}</h2>
+    <div class="text-sm text-muted">
+      {{ contract.clause_count }} clauses &bull;
+      {{ contract.page_count }} pages &bull;
+      {{ contract.contract_type or 'Contract' }}
+    </div>
+  </div>
+  <div class="flex gap-1">
+    <span class="badge badge-status">{{ '%.0f' | format(review.progress * 100) }}% complete</span>
+    <a href="/contracts/{{ contract.id }}/redline?review_id={{ review.id }}" class="btn btn-sm">Download Redline</a>
+  </div>
+</div>
+
+<!-- Progress & Stats -->
+<div class="card">
+  <div class="progress-bar mb-1">
+    <div class="progress-fill" style="width:{{ (review.progress * 100) | int }}%"></div>
+  </div>
+  <div class="grid grid-4">
+    <div class="stat">
+      <div class="stat-value">{{ review.clause_reviews | length }}</div>
+      <div class="stat-label">Total Clauses</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value" style="color:var(--critical);">{{ review.critical_findings_count }}</div>
+      <div class="stat-label">Critical</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value" style="color:var(--medium);">{{ review.pending_human_reviews | length }}</div>
+      <div class="stat-label">Pending Review</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value">{{ review.cross_clause_patterns | length }}</div>
+      <div class="stat-label">Cross-Clause Issues</div>
+    </div>
+  </div>
+</div>
+
+<!-- Risk Distribution -->
+<div class="card">
+  <h3 class="mb-1">Risk Distribution</h3>
+  <div class="flex gap-2" style="flex-wrap:wrap;">
+    {% set risk_counts = namespace(critical=0, high=0, medium=0, low=0, info=0) %}
+    {% for cr in review.clause_reviews %}
+      {% if cr.ai_risk_level.value == 'critical' %}{% set risk_counts.critical = risk_counts.critical + 1 %}
+      {% elif cr.ai_risk_level.value == 'high' %}{% set risk_counts.high = risk_counts.high + 1 %}
+      {% elif cr.ai_risk_level.value == 'medium' %}{% set risk_counts.medium = risk_counts.medium + 1 %}
+      {% elif cr.ai_risk_level.value == 'low' %}{% set risk_counts.low = risk_counts.low + 1 %}
+      {% else %}{% set risk_counts.info = risk_counts.info + 1 %}
+      {% endif %}
+    {% endfor %}
+    {% if risk_counts.critical %}<span class="badge badge-critical">{{ risk_counts.critical }} Critical</span>{% endif %}
+    {% if risk_counts.high %}<span class="badge badge-high">{{ risk_counts.high }} High</span>{% endif %}
+    {% if risk_counts.medium %}<span class="badge badge-medium">{{ risk_counts.medium }} Medium</span>{% endif %}
+    {% if risk_counts.low %}<span class="badge badge-low">{{ risk_counts.low }} Low</span>{% endif %}
+    {% if risk_counts.info %}<span class="badge badge-informational">{{ risk_counts.info }} Info</span>{% endif %}
+  </div>
+</div>
+
+<!-- Cross-Clause Patterns -->
+{% if review.cross_clause_patterns %}
+<div class="card">
+  <h3 class="mb-1">Cross-Clause Risk Patterns</h3>
+  {% for p in review.cross_clause_patterns %}
+  <div class="finding finding-{{ p.risk_level.value }}">
+    <h4>{{ p.title }}</h4>
+    <p>{{ p.description }}</p>
+    {% if p.recommendation %}
+    <div class="suggested-revision">{{ p.recommendation }}</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<!-- Clause Reviews -->
+<div class="card">
+  <h3 class="mb-1">Clause Reviews</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Clause</th>
+        <th>Type</th>
+        <th>Risk</th>
+        <th>Confidence</th>
+        <th>Findings</th>
+        <th>Status</th>
+        <th>Assigned To</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for cr in review.clause_reviews | sort(attribute='ai_risk_level.value') %}
+      {% set clause = clause_map.get(cr.clause_id) %}
+      <tr>
+        <td>{{ clause.title[:40] if clause else 'Unknown' }}</td>
+        <td><span class="text-sm">{{ clause.clause_type.value if clause else '' }}</span></td>
+        <td><span class="badge badge-{{ cr.ai_risk_level.value }}">{{ cr.ai_risk_level.value }}</span></td>
+        <td>{{ '%.0f' | format(cr.ai_confidence * 100) }}%</td>
+        <td>{{ cr.ai_findings | length }}</td>
+        <td><span class="badge badge-status">{{ cr.stage.value }}</span></td>
+        <td class="text-sm">{{ cr.assigned_to[:8] if cr.assigned_to else '—' }}</td>
+        <td>
+          <a href="/app/review/{{ review.id }}/clause/{{ cr.id }}" class="btn btn-sm btn-primary">
+            Review
+          </a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

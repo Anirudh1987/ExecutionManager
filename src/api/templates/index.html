@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — ExecutionManager{% endblock %}
+
+{% block content %}
+<div class="flex-between mb-2">
+  <h2>Active Deals</h2>
+  <button class="btn btn-primary" onclick="document.getElementById('newDealModal').style.display='flex'">
+    + New Deal
+  </button>
+</div>
+
+{% if deals %}
+<div class="grid grid-2">
+  {% for deal in deals %}
+  <a href="/app/deal/{{ deal.id }}" class="card" style="text-decoration:none;color:inherit;">
+    <div class="card-header">
+      <h3>{{ deal.name }}</h3>
+      <span class="badge badge-status">{{ deal.status.value }}</span>
+    </div>
+    <div class="text-sm text-muted mb-1">{{ deal.client_name }}</div>
+    <div class="grid grid-3" style="margin-top:12px;">
+      <div class="stat" style="padding:8px;">
+        <div class="stat-value" style="font-size:1.5rem;">{{ deal.contract_ids | length }}</div>
+        <div class="stat-label">Contracts</div>
+      </div>
+      <div class="stat" style="padding:8px;">
+        <div class="stat-value" style="font-size:1.5rem;">{{ deal.review_ids | length }}</div>
+        <div class="stat-label">Reviews</div>
+      </div>
+      <div class="stat" style="padding:8px;">
+        <div class="stat-value" style="font-size:1.5rem;">{{ deal.deal_type or '—' }}</div>
+        <div class="stat-label">Type</div>
+      </div>
+    </div>
+    {% if deal.deal_value %}
+    <div class="text-sm text-muted mt-1">Value: {{ deal.deal_value }}</div>
+    {% endif %}
+    {% if deal.client_side %}
+    <div class="text-sm text-muted">Perspective: {{ deal.client_side }} | {{ deal.jurisdiction or 'India' }}</div>
+    {% endif %}
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+  <h3>No deals yet</h3>
+  <p>Create your first deal to start reviewing M&A contracts.</p>
+</div>
+{% endif %}
+
+<!-- New Deal Modal -->
+<div id="newDealModal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)this.style.display='none'">
+  <div class="modal">
+    <h2 class="mb-2">Create New Deal</h2>
+    <form hx-post="/deals/" hx-target="body" hx-swap="none"
+          onsubmit="setTimeout(()=>window.location.reload(),500)">
+      <div class="form-group">
+        <label>Deal Name *</label>
+        <input type="text" name="name" required placeholder="e.g., Acme Corp Series B">
+      </div>
+      <div class="form-group">
+        <label>Client Name *</label>
+        <input type="text" name="client_name" required placeholder="e.g., Venture Partners LLP">
+      </div>
+      <div class="grid grid-2">
+        <div class="form-group">
+          <label>Deal Type</label>
+          <select name="deal_type">
+            <option value="pe_investment">PE Investment</option>
+            <option value="acquisition">Acquisition</option>
+            <option value="merger">Merger</option>
+            <option value="divestiture">Divestiture</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Deal Value</label>
+          <input type="text" name="deal_value" placeholder="e.g., 500Cr">
+        </div>
+      </div>
+      <div class="grid grid-2">
+        <div class="form-group">
+          <label>Client Side</label>
+          <select name="client_side">
+            <option value="investor">Investor</option>
+            <option value="promoter">Promoter</option>
+            <option value="buyer">Buyer</option>
+            <option value="seller">Seller</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Industry</label>
+          <input type="text" name="industry" placeholder="e.g., technology, pharma">
+        </div>
+      </div>
+      <div class="grid grid-2">
+        <div class="form-group">
+          <label>Jurisdiction</label>
+          <select name="jurisdiction">
+            <option value="india" selected>India</option>
+            <option value="us">United States</option>
+            <option value="uk">United Kingdom</option>
+            <option value="singapore">Singapore</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Deal Structure</label>
+          <select name="deal_structure">
+            <option value="">—</option>
+            <option value="SHA">SHA</option>
+            <option value="SPA">SPA</option>
+            <option value="APA">APA</option>
+            <option value="merger_scheme">Merger Scheme</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Description</label>
+        <textarea name="description" placeholder="Brief deal description..."></textarea>
+      </div>
+      <div class="flex gap-1" style="justify-content:flex-end;">
+        <button type="button" class="btn" onclick="document.getElementById('newDealModal').style.display='none'">Cancel</button>
+        <button type="submit" class="btn btn-primary">Create Deal</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
