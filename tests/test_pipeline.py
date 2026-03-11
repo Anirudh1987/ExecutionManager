@@ -63,22 +63,22 @@ def store():
 
 
 @pytest.fixture
-def team(store):
+async def team(store):
     members = [
         TeamMember(name="Alice", email="alice@firm.com", role=Role.STRATEGIST),
         TeamMember(name="Bob", email="bob@firm.com", role=Role.ANALYST),
         TeamMember(name="Carol", email="carol@firm.com", role=Role.COORDINATOR),
     ]
     for m in members:
-        store.save_team_member(m)
+        await store.save_team_member(m)
     return members
 
 
 @pytest.fixture
-def deal(store, team):
+async def deal(store, team):
     d = Deal(name="Acme Acquisition", client_name="Buyer Corp", deal_type="acquisition")
-    store.save_deal(d)
-    store.assign_team_to_deal(d.id, [m.id for m in team])
+    await store.save_deal(d)
+    await store.assign_team_to_deal(d.id, [m.id for m in team])
     return d
 
 
@@ -197,7 +197,7 @@ class TestPipeline:
         assert review.progress >= 0.0
 
         # Deal should be in review
-        updated_deal = store.get_deal(deal.id)
+        updated_deal = await store.get_deal(deal.id)
         assert updated_deal.status == DealStatus.IN_REVIEW
 
     @pytest.mark.asyncio

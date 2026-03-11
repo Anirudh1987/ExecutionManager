@@ -18,7 +18,7 @@ templates = Jinja2Templates(directory=_template_dir)
 async def index(request: Request):
     """Landing page — deal list."""
     store = request.app.state.store
-    deals = store.list_deals()
+    deals = await store.list_deals()
     return templates.TemplateResponse("index.html", {"request": request, "deals": deals})
 
 
@@ -26,10 +26,10 @@ async def index(request: Request):
 async def deal_view(deal_id: str, request: Request):
     """Deal detail — contracts, reviews, status."""
     store = request.app.state.store
-    deal = store.get_deal(deal_id)
-    contracts = store.get_contracts_for_deal(deal_id)
-    reviews = store.get_reviews_for_deal(deal_id)
-    team = store.get_team_for_deal(deal_id)
+    deal = await store.get_deal(deal_id)
+    contracts = await store.get_contracts_for_deal(deal_id)
+    reviews = await store.get_reviews_for_deal(deal_id)
+    team = await store.get_team_for_deal(deal_id)
     return templates.TemplateResponse("deal.html", {
         "request": request, "deal": deal, "contracts": contracts,
         "reviews": reviews, "team": team,
@@ -40,9 +40,9 @@ async def deal_view(deal_id: str, request: Request):
 async def review_view(review_id: str, request: Request):
     """Review dashboard — clause list with risk levels and status."""
     store = request.app.state.store
-    review = store.get_review(review_id)
-    contract = store.get_contract(review.contract_id)
-    deal = store.get_deal(review.deal_id)
+    review = await store.get_review(review_id)
+    contract = await store.get_contract(review.contract_id)
+    deal = await store.get_deal(review.deal_id)
     clause_map = {c.id: c for c in contract.clauses}
     return templates.TemplateResponse("review.html", {
         "request": request, "review": review, "contract": contract,
@@ -54,11 +54,11 @@ async def review_view(review_id: str, request: Request):
 async def clause_review_view(review_id: str, clause_review_id: str, request: Request):
     """Clause review detail — findings, verdict form."""
     store = request.app.state.store
-    review = store.get_review(review_id)
+    review = await store.get_review(review_id)
     cr = next((cr for cr in review.clause_reviews if cr.id == clause_review_id), None)
-    contract = store.get_contract(review.contract_id)
+    contract = await store.get_contract(review.contract_id)
     clause = next((c for c in contract.clauses if c.id == cr.clause_id), None) if cr else None
-    deal = store.get_deal(review.deal_id)
+    deal = await store.get_deal(review.deal_id)
     return templates.TemplateResponse("clause_review.html", {
         "request": request, "review": review, "clause_review": cr,
         "clause": clause, "deal": deal, "contract": contract,

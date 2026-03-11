@@ -49,8 +49,8 @@ async def time_estimates(review_id: str, request: Request):
     store = request.app.state.store
     time_tracker = request.app.state.time_tracker
 
-    review = store.get_review(review_id)
-    contract = store.get_contract(review.contract_id)
+    review = await store.get_review(review_id)
+    contract = await store.get_contract(review.contract_id)
     clauses_by_id = {c.id: c.clause_type for c in contract.clauses}
 
     return time_tracker.estimate_deal_completion(review, clauses_by_id)

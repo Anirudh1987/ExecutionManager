@@ -106,7 +106,7 @@ class ReviewPipeline:
         # Step 1: Decompose contract into clauses
         clauses = extract_clauses(contract)
         contract.clauses = clauses
-        self._store.save_contract(contract)
+        await self._store.save_contract(contract)
 
         # Step 2: Create the review
         review = Review(
@@ -184,7 +184,7 @@ class ReviewPipeline:
         # Step 3c: Round-aware — carry forward verdicts for unchanged clauses
         changed_clause_ids: set[str] | None = None
         if contract.previous_version_id:
-            changed_clause_ids = self._carry_forward_verdicts(
+            changed_clause_ids = await self._carry_forward_verdicts(
                 contract, review, all_clause_reviews, clauses
             )
 
@@ -202,7 +202,7 @@ class ReviewPipeline:
         review.batches = batches
 
         # Step 6: Route to humans
-        team = self._store.get_team_for_deal(deal.id)
+        team = await self._store.get_team_for_deal(deal.id)
         for batch in batches:
             batch_reviews = [
                 cr for cr in review.clause_reviews
@@ -238,8 +238,8 @@ class ReviewPipeline:
         deal.status = DealStatus.IN_REVIEW
         if review.id not in deal.review_ids:
             deal.review_ids.append(review.id)
-        self._store.save_deal(deal)
-        self._store.save_review(review)
+        await self._store.save_deal(deal)
+        await self._store.save_review(review)
 
         # Broadcast via WebSocket
         await self._broadcast(deal.id, {
@@ -353,7 +353,7 @@ class ReviewPipeline:
         - If DISAGREE: record disagreement for learning loop
         - If suggested_language provided: save to precedent library
         """
-        review = self._store.get_review(review_id)
+        review = await self._store.get_review(review_id)
         clause_review = next(
             (cr for cr in review.clause_reviews if cr.id == clause_review_id),
             None,
@@ -365,7 +365,7 @@ class ReviewPipeline:
 
         if annotation.verdict.value == "escalate":
             clause_review.stage = ReviewStage.ESCALATED
-            team = self._store.get_team_for_deal(review.deal_id)
+            team = await self._store.get_team_for_deal(review.deal_id)
             strategist = self._router.get_strategist(team)
             if strategist:
                 clause_review.assigned_to = strategist.id
@@ -378,7 +378,7 @@ class ReviewPipeline:
 
             # Record time tracking
             if self._time_tracker and clause_review.review_duration_minutes is not None:
-                contract = self._store.get_contract(review.contract_id)
+                contract = await self._store.get_contract(review.contract_id)
                 clause = next(
                     (c for c in contract.clauses if c.id == clause_review.clause_id),
                     None,
@@ -391,7 +391,7 @@ class ReviewPipeline:
 
         # Save precedent if human provided suggested language
         if self._precedents and annotation.suggested_language:
-            contract = self._store.get_contract(review.contract_id)
+            contract = await self._store.get_contract(review.contract_id)
             clause = next(
                 (c for c in contract.clauses if c.id == clause_review.clause_id),
                 None,
@@ -416,12 +416,12 @@ class ReviewPipeline:
                     comment=annotation.comment,
                 ))
 
-        self._store.save_review(review)
+        await self._store.save_review(review)
 
         # Check if all clause reviews are complete
         if all(cr.is_complete for cr in review.clause_reviews):
             review.completed_at = datetime.utcnow()
-            self._store.save_review(review)
+            await self._store.save_review(review)
             await self._broadcast(review.deal_id, {
                 "event": "review_completed",
                 "review_id": review.id,
@@ -436,9 +436,9 @@ class ReviewPipeline:
 
         return clause_review
 
-    def get_review_dashboard(self, review_id: str) -> dict:
+    async def get_review_dashboard(self, review_id: str) -> dict:
         """Summary view for the team — what needs attention, what's done."""
-        review = self._store.get_review(review_id)
+        review = await self._store.get_review(review_id)
 
         by_stage: dict[str, int] = {}
         by_risk: dict[str, int] = {}
@@ -462,7 +462,7 @@ class ReviewPipeline:
             "is_complete": review.completed_at is not None,
         }
 
-    def _carry_forward_verdicts(
+    async def _carry_forward_verdicts(
         self,
         contract: Contract,
         review: Review,
@@ -475,16 +475,16 @@ class ReviewPipeline:
         copies the previous verdict so humans only review changed/new clauses.
         Returns set of clause IDs that have changes (need human review).
         """
-        previous_contract = self._store.get_contract(contract.previous_version_id)
+        previous_contract = await self._store.get_contract(contract.previous_version_id)
         if not previous_contract:
             return set(c.id for c in clauses)
 
         # Find previous review for the prior contract
         previous_review = None
-        deal = self._store.get_deal(review.deal_id)
+        deal = await self._store.get_deal(review.deal_id)
         if deal:
             for rid in reversed(deal.review_ids):
-                r = self._store.get_review(rid)
+                r = await self._store.get_review(rid)
                 if r and r.contract_id == previous_contract.id:
                     previous_review = r
                     break
@@ -528,13 +528,13 @@ class ReviewPipeline:
 
         return changed_ids
 
-    def get_time_dashboard(self, review_id: str, deal_context: DealContext | None = None) -> dict:
+    async def get_time_dashboard(self, review_id: str, deal_context: DealContext | None = None) -> dict:
         """Get time budget dashboard for a review."""
-        review = self._store.get_review(review_id)
-        team = self._store.get_team_for_deal(review.deal_id)
+        review = await self._store.get_review(review_id)
+        team = await self._store.get_team_for_deal(review.deal_id)
         context = deal_context or DealContext()
 
-        contract = self._store.get_contract(review.contract_id)
+        contract = await self._store.get_contract(review.contract_id)
         clauses = contract.clauses if contract else []
         clause_lookup = {c.id: c for c in clauses}
 

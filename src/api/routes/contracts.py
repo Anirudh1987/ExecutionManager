@@ -41,12 +41,12 @@ async def upload_contract(req: UploadContractRequest, request: Request):
         page_count=req.page_count,
         previous_version_id=req.previous_version_id or None,
     )
-    store.save_contract(contract)
+    await store.save_contract(contract)
 
     # Add contract to deal
-    deal = store.get_deal(req.deal_id)
+    deal = await store.get_deal(req.deal_id)
     deal.contract_ids.append(contract.id)
-    store.save_deal(deal)
+    await store.save_deal(deal)
 
     # Start the review pipeline
     review = await pipeline.start_review(contract, deal)
@@ -84,11 +84,11 @@ async def upload_pdf(
         raw_text=raw_text,
         page_count=page_count,
     )
-    store.save_contract(contract)
+    await store.save_contract(contract)
 
-    deal = store.get_deal(deal_id)
+    deal = await store.get_deal(deal_id)
     deal.contract_ids.append(contract.id)
-    store.save_deal(deal)
+    await store.save_deal(deal)
 
     review = await pipeline.start_review(contract, deal)
 
@@ -128,11 +128,11 @@ async def upload_docx(
         page_count=page_count,
         previous_version_id=previous_version_id or None,
     )
-    store.save_contract(contract)
+    await store.save_contract(contract)
 
-    deal = store.get_deal(deal_id)
+    deal = await store.get_deal(deal_id)
     deal.contract_ids.append(contract.id)
-    store.save_deal(deal)
+    await store.save_deal(deal)
 
     review = await pipeline.start_review(contract, deal)
 
@@ -181,11 +181,11 @@ async def upload_file(
         page_count=page_count,
         previous_version_id=previous_version_id or None,
     )
-    store.save_contract(contract)
+    await store.save_contract(contract)
 
-    deal = store.get_deal(deal_id)
+    deal = await store.get_deal(deal_id)
     deal.contract_ids.append(contract.id)
-    store.save_deal(deal)
+    await store.save_deal(deal)
 
     review = await pipeline.start_review(contract, deal)
 
@@ -206,8 +206,8 @@ async def compare_contract_versions(
 ):
     """Compare two contract versions and return a structured diff."""
     store = request.app.state.store
-    old = store.get_contract(contract_id)
-    new = store.get_contract(other_contract_id)
+    old = await store.get_contract(contract_id)
+    new = await store.get_contract(other_contract_id)
     diff = compare_contracts(old, new)
     return {
         "old_contract_id": diff.old_contract_id,
@@ -239,7 +239,7 @@ async def compare_contract_versions(
 @router.get("/{contract_id}")
 async def get_contract(contract_id: str, request: Request):
     store = request.app.state.store
-    contract = store.get_contract(contract_id)
+    contract = await store.get_contract(contract_id)
     return {
         "id": contract.id,
         "deal_id": contract.deal_id,
@@ -270,13 +270,13 @@ async def export_redline(
 ):
     """Export a redlined Word document for a contract review."""
     store = request.app.state.store
-    contract = store.get_contract(contract_id)
-    review = store.get_review(review_id)
+    contract = await store.get_contract(contract_id)
+    review = await store.get_review(review_id)
 
     from src.engine.docx_exporter import export_redline_docx
 
     # Determine negotiation round
-    deal = store.get_deal(contract.deal_id)
+    deal = await store.get_deal(contract.deal_id)
     round_num = 1
     if deal:
         for i, rid in enumerate(deal.review_ids):

@@ -20,14 +20,14 @@ class CreateMemberRequest(BaseModel):
 async def create_team_member(req: CreateMemberRequest, request: Request):
     store = request.app.state.store
     member = TeamMember(name=req.name, email=req.email, role=req.role)
-    store.save_team_member(member)
+    await store.save_team_member(member)
     return {"id": member.id, "name": member.name, "role": member.role.value}
 
 
 @router.get("/")
 async def list_team(request: Request):
     store = request.app.state.store
-    members = store.list_team_members()
+    members = await store.list_team_members()
     return [
         {
             "id": m.id,

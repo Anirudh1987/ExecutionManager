@@ -25,7 +25,7 @@ class SubmitVerdictRequest(BaseModel):
 async def get_review(review_id: str, request: Request):
     """Get full review status with all clause reviews."""
     store = request.app.state.store
-    review = store.get_review(review_id)
+    review = await store.get_review(review_id)
     return {
         "id": review.id,
         "contract_id": review.contract_id,
@@ -55,7 +55,7 @@ async def get_review(review_id: str, request: Request):
 async def review_dashboard(review_id: str, request: Request):
     """Team dashboard view — what needs attention."""
     pipeline = request.app.state.pipeline
-    return pipeline.get_review_dashboard(review_id)
+    return await pipeline.get_review_dashboard(review_id)
 
 
 @router.get("/{review_id}/clause/{clause_review_id}")
@@ -64,7 +64,7 @@ async def get_clause_review_detail(
 ):
     """Detailed view of a single clause review with all AI findings."""
     store = request.app.state.store
-    review = store.get_review(review_id)
+    review = await store.get_review(review_id)
     cr = next(
         (cr for cr in review.clause_reviews if cr.id == clause_review_id), None
     )
@@ -72,7 +72,7 @@ async def get_clause_review_detail(
         return {"error": "Clause review not found"}
 
     # Get the clause text for context
-    contract = store.get_contract(review.contract_id)
+    contract = await store.get_contract(review.contract_id)
     clause = next((c for c in contract.clauses if c.id == cr.clause_id), None)
 
     return {
@@ -148,8 +148,8 @@ async def submit_verdict(
     cascade_warnings = []
     if req.suggested_language:
         store = request.app.state.store
-        review = store.get_review(review_id)
-        contract = store.get_contract(review.contract_id)
+        review = await store.get_review(review_id)
+        contract = await store.get_contract(review.contract_id)
         clause = next(
             (c for c in contract.clauses if c.id == clause_review.clause_id), None
         ) if contract else None
@@ -176,7 +176,7 @@ async def submit_verdict(
 async def cross_clause_patterns(review_id: str, request: Request):
     """Get cross-clause risk patterns detected in this review."""
     store = request.app.state.store
-    review = store.get_review(review_id)
+    review = await store.get_review(review_id)
     return [
         {
             "id": p.id,
@@ -197,7 +197,7 @@ async def start_clause_review(
 ):
     """Mark when a reviewer starts viewing a clause (for time tracking)."""
     store = request.app.state.store
-    review = store.get_review(review_id)
+    review = await store.get_review(review_id)
     cr = next(
         (cr for cr in review.clause_reviews if cr.id == clause_review_id), None
     )
@@ -206,7 +206,7 @@ async def start_clause_review(
 
     if not cr.human_started_at:
         cr.human_started_at = datetime.utcnow()
-        store.save_review(review)
+        await store.save_review(review)
 
     return {
         "clause_review_id": cr.id,
@@ -218,7 +218,7 @@ async def start_clause_review(
 async def my_review_queue(review_id: str, reviewer_id: str, request: Request):
     """Get the list of clause reviews assigned to a specific reviewer."""
     store = request.app.state.store
-    review = store.get_review(review_id)
+    review = await store.get_review(review_id)
 
     my_items = [
         cr
@@ -251,4 +251,4 @@ async def my_review_queue(review_id: str, reviewer_id: str, request: Request):
 async def time_dashboard(review_id: str, request: Request):
     """Get time budget dashboard for a review."""
     pipeline = request.app.state.pipeline
-    return pipeline.get_time_dashboard(review_id)
+    return await pipeline.get_time_dashboard(review_id)

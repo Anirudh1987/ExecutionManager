@@ -243,11 +243,11 @@ class TestPipelineBatching:
             TeamMember(name="C", email="c@b.com", role=Role.COORDINATOR),
         ]
         for m in team:
-            store.save_team_member(m)
+            await store.save_team_member(m)
 
         deal = Deal(name="Test", client_name="Client")
-        store.save_deal(deal)
-        store.assign_team_to_deal(deal.id, [m.id for m in team])
+        await store.save_deal(deal)
+        await store.assign_team_to_deal(deal.id, [m.id for m in team])
 
         contract = Contract(
             deal_id=deal.id,
@@ -264,7 +264,7 @@ class TestPipelineBatching:
         # Should have clause reviews
         assert len(review.clause_reviews) > 0
         # Dashboard should include batch count
-        dashboard = pipeline.get_review_dashboard(review.id)
+        dashboard = await pipeline.get_review_dashboard(review.id)
         assert "batches" in dashboard
 
     @pytest.mark.asyncio
@@ -272,7 +272,7 @@ class TestPipelineBatching:
         store = Store()
         team = [TeamMember(name="A", email="a@b.com", role=Role.STRATEGIST)]
         for m in team:
-            store.save_team_member(m)
+            await store.save_team_member(m)
 
         deal = Deal(
             name="Test",
@@ -280,8 +280,8 @@ class TestPipelineBatching:
             client_side="seller",
             deal_value="$10,000,000",
         )
-        store.save_deal(deal)
-        store.assign_team_to_deal(deal.id, [m.id for m in team])
+        await store.save_deal(deal)
+        await store.assign_team_to_deal(deal.id, [m.id for m in team])
 
         contract = Contract(
             deal_id=deal.id,

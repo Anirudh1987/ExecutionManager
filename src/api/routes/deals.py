@@ -38,14 +38,14 @@ async def create_deal(req: CreateDealRequest, request: Request):
         deal_structure=req.deal_structure,
         description=req.description,
     )
-    store.save_deal(deal)
+    await store.save_deal(deal)
     return {"deal_id": deal.id, "status": deal.status.value}
 
 
 @router.get("/")
 async def list_deals(request: Request):
     store = request.app.state.store
-    deals = store.list_deals()
+    deals = await store.list_deals()
     return [
         {
             "id": d.id,
@@ -61,7 +61,7 @@ async def list_deals(request: Request):
 @router.get("/{deal_id}")
 async def get_deal(deal_id: str, request: Request):
     store = request.app.state.store
-    deal = store.get_deal(deal_id)
+    deal = await store.get_deal(deal_id)
     return {
         "id": deal.id,
         "name": deal.name,
@@ -81,12 +81,12 @@ async def get_deal(deal_id: str, request: Request):
 async def assign_team(deal_id: str, request: Request):
     """Assign all active team members to a deal."""
     store = request.app.state.store
-    deal = store.get_deal(deal_id)
-    members = store.list_team_members()
+    deal = await store.get_deal(deal_id)
+    members = await store.list_team_members()
     member_ids = [m.id for m in members if m.is_active]
-    store.assign_team_to_deal(deal_id, member_ids)
+    await store.assign_team_to_deal(deal_id, member_ids)
     deal.team_member_ids = member_ids
-    store.save_deal(deal)
+    await store.save_deal(deal)
     return {"deal_id": deal_id, "team_size": len(member_ids)}
 
 
@@ -95,9 +95,9 @@ async def generate_advisory(deal_id: str, request: Request):
     """Generate client advisory from completed reviews."""
     store = request.app.state.store
     advisory_gen = request.app.state.advisory
-    deal = store.get_deal(deal_id)
-    contracts = store.get_contracts_for_deal(deal_id)
-    reviews = store.get_reviews_for_deal(deal_id)
+    deal = await store.get_deal(deal_id)
+    contracts = await store.get_contracts_for_deal(deal_id)
+    reviews = await store.get_reviews_for_deal(deal_id)
     # Build DealContext from deal fields
     deal_value = None
     if deal.deal_value:
@@ -114,9 +114,9 @@ async def generate_advisory(deal_id: str, request: Request):
         deal_structure=deal.deal_structure,
     )
     result = await advisory_gen.generate_advisory(deal, contracts, reviews, deal_context)
-    store.save_deal(deal)
+    await store.save_deal(deal)
     deal.status = DealStatus.ADVISORY_DRAFTING
-    store.save_deal(deal)
+    await store.save_deal(deal)
     return result
 
 
@@ -131,9 +131,9 @@ async def export_advisory(
     advisory_gen = request.app.state.advisory
     exporter = request.app.state.exporter
 
-    deal = store.get_deal(deal_id)
-    contracts = store.get_contracts_for_deal(deal_id)
-    reviews = store.get_reviews_for_deal(deal_id)
+    deal = await store.get_deal(deal_id)
+    contracts = await store.get_contracts_for_deal(deal_id)
+    reviews = await store.get_reviews_for_deal(deal_id)
 
     # Build DealContext
     deal_value = None
@@ -173,14 +173,14 @@ async def export_advisory(
 async def get_negotiation_history(deal_id: str, request: Request):
     """Get negotiation round history for a deal."""
     store = request.app.state.store
-    deal = store.get_deal(deal_id)
+    deal = await store.get_deal(deal_id)
 
     # Gather all reviews and their contract versions
     rounds = []
     for i, review_id in enumerate(deal.review_ids):
-        review = store.get_review(review_id)
+        review = await store.get_review(review_id)
         if review:
-            contract = store.get_contract(review.contract_id)
+            contract = await store.get_contract(review.contract_id)
             round_info = {
                 "round_number": i + 1,
                 "review_id": review.id,
