@@ -1,7 +1,7 @@
 """AI-powered clause analysis — risk scoring, finding generation, and market comparison.
 
-Covers all 18 M&A clause types with specific risk patterns.
-Supports DealContext for buyer/seller-aware risk assessment.
+Covers all 26 M&A clause types (18 universal + 8 India-specific) with risk patterns.
+Supports DealContext for buyer/seller/investor/promoter-aware risk assessment.
 """
 
 from __future__ import annotations
@@ -327,6 +327,239 @@ RISK_PATTERNS: dict[ClauseType, list[dict]] = {
             "seller_risk": RiskLevel.LOW,
         },
     ],
+    # ----- India-Specific M&A Clause Types -----
+    ClauseType.ANTI_DILUTION: [
+        {
+            "category": "anti_dilution_formula",
+            "description": "Full ratchet anti-dilution instead of broad-based weighted average — investor-aggressive, may deter future funding",
+            "investor_risk": RiskLevel.LOW,
+            "promoter_risk": RiskLevel.CRITICAL,
+            "buyer_risk": RiskLevel.LOW,
+            "seller_risk": RiskLevel.CRITICAL,
+            "market_benchmark": "92% of Indian PE deals use broad-based weighted average.",
+        },
+        {
+            "category": "anti_dilution_carveouts",
+            "description": "Missing carve-outs for ESOPs, bonus issues, or stock splits from anti-dilution trigger",
+            "investor_risk": RiskLevel.MEDIUM,
+            "promoter_risk": RiskLevel.HIGH,
+            "buyer_risk": RiskLevel.MEDIUM,
+            "seller_risk": RiskLevel.HIGH,
+            "market_benchmark": "Standard carve-outs: ESOPs (up to 10-15% pool), bonus issues, stock splits.",
+        },
+        {
+            "category": "pay_to_play",
+            "description": "Missing pay-to-play provision — investors who don't participate in down rounds retain full anti-dilution protection",
+            "investor_risk": RiskLevel.LOW,
+            "promoter_risk": RiskLevel.HIGH,
+            "buyer_risk": RiskLevel.LOW,
+            "seller_risk": RiskLevel.HIGH,
+            "market_benchmark": "Pay-to-play increasingly standard in Indian Series B+ rounds.",
+        },
+    ],
+    ClauseType.TAG_ALONG_DRAG_ALONG: [
+        {
+            "category": "drag_threshold",
+            "description": "Drag-along threshold too low — allows minority to force sale without adequate majority support",
+            "investor_risk": RiskLevel.LOW,
+            "promoter_risk": RiskLevel.CRITICAL,
+            "buyer_risk": RiskLevel.LOW,
+            "seller_risk": RiskLevel.CRITICAL,
+            "market_benchmark": "Standard drag-along threshold in India: 75-90% of share capital.",
+        },
+        {
+            "category": "tag_along_scope",
+            "description": "Tag-along right limited to direct transfers — does not cover indirect transfers or change of control",
+            "investor_risk": RiskLevel.HIGH,
+            "promoter_risk": RiskLevel.LOW,
+            "buyer_risk": RiskLevel.HIGH,
+            "seller_risk": RiskLevel.LOW,
+            "market_benchmark": "Best practice: tag-along covers both direct and indirect transfers.",
+        },
+        {
+            "category": "drag_pricing",
+            "description": "Drag-along does not guarantee minimum price or fair value determination mechanism",
+            "investor_risk": RiskLevel.MEDIUM,
+            "promoter_risk": RiskLevel.CRITICAL,
+            "buyer_risk": RiskLevel.MEDIUM,
+            "seller_risk": RiskLevel.CRITICAL,
+            "market_benchmark": "Market standard: drag price at higher of offer price and independent valuation.",
+        },
+    ],
+    ClauseType.RESERVED_MATTERS: [
+        {
+            "category": "reserved_matters_scope",
+            "description": "Reserved matters list too expansive — effectively transfers day-to-day control to investor",
+            "investor_risk": RiskLevel.LOW,
+            "promoter_risk": RiskLevel.CRITICAL,
+            "buyer_risk": RiskLevel.LOW,
+            "seller_risk": RiskLevel.CRITICAL,
+            "market_benchmark": "Typical Indian SHA: 15-25 reserved matters. Over 30 is investor-aggressive.",
+        },
+        {
+            "category": "reserved_matters_thresholds",
+            "description": "Missing monetary thresholds for reserved matters — every minor decision requires investor consent",
+            "investor_risk": RiskLevel.LOW,
+            "promoter_risk": RiskLevel.HIGH,
+            "buyer_risk": RiskLevel.LOW,
+            "seller_risk": RiskLevel.HIGH,
+            "market_benchmark": "Market practice: capex >5-10% of revenue, related party >₹50L, debt >1x EBITDA.",
+        },
+        {
+            "category": "deadlock_resolution",
+            "description": "No deadlock resolution mechanism for reserved matters — operational paralysis risk",
+            "investor_risk": RiskLevel.HIGH,
+            "promoter_risk": RiskLevel.HIGH,
+            "buyer_risk": RiskLevel.HIGH,
+            "seller_risk": RiskLevel.HIGH,
+            "market_benchmark": "Standard: escalation → mediation → put/call option within 30-60 days.",
+        },
+    ],
+    ClauseType.ROFR_ROFO: [
+        {
+            "category": "rofr_vs_rofo",
+            "description": "ROFR (right of first refusal) instead of ROFO (right of first offer) — chills third-party interest in shares",
+            "investor_risk": RiskLevel.LOW,
+            "promoter_risk": RiskLevel.HIGH,
+            "buyer_risk": RiskLevel.LOW,
+            "seller_risk": RiskLevel.HIGH,
+            "market_benchmark": "ROFO preferred by promoters, ROFR by investors. Most Indian SHAs use ROFR.",
+        },
+        {
+            "category": "rofr_timeline",
+            "description": "ROFR exercise period too long — delays legitimate exit transactions",
+            "investor_risk": RiskLevel.LOW,
+            "promoter_risk": RiskLevel.MEDIUM,
+            "buyer_risk": RiskLevel.LOW,
+            "seller_risk": RiskLevel.MEDIUM,
+            "market_benchmark": "Market standard: 30-45 days exercise period. Over 60 days is excessive.",
+        },
+        {
+            "category": "rofr_pricing",
+            "description": "ROFR pricing mechanism unclear — does right-holder match third-party price or use formula?",
+            "investor_risk": RiskLevel.MEDIUM,
+            "promoter_risk": RiskLevel.MEDIUM,
+            "buyer_risk": RiskLevel.MEDIUM,
+            "seller_risk": RiskLevel.MEDIUM,
+            "market_benchmark": "Best practice: match third-party offer on identical terms and conditions.",
+        },
+    ],
+    ClauseType.LOCK_IN: [
+        {
+            "category": "lock_in_duration",
+            "description": "Lock-in period too long for the investor or too short for company stability",
+            "investor_risk": RiskLevel.MEDIUM,
+            "promoter_risk": RiskLevel.LOW,
+            "buyer_risk": RiskLevel.MEDIUM,
+            "seller_risk": RiskLevel.LOW,
+            "market_benchmark": "SEBI minimum: 3yr promoter, 1yr investor post-IPO. PE standard: 1-3yr investor.",
+        },
+        {
+            "category": "lock_in_exceptions",
+            "description": "Missing carve-outs from lock-in for inter-se transfers, pledging, or affiliate transfers",
+            "investor_risk": RiskLevel.HIGH,
+            "promoter_risk": RiskLevel.HIGH,
+            "buyer_risk": RiskLevel.HIGH,
+            "seller_risk": RiskLevel.HIGH,
+            "market_benchmark": "Standard carve-outs: inter-se transfers among promoter group, pledge to lenders.",
+        },
+        {
+            "category": "lock_in_release_trigger",
+            "description": "No early release trigger on IPO, change of control, or material breach by other party",
+            "investor_risk": RiskLevel.HIGH,
+            "promoter_risk": RiskLevel.MEDIUM,
+            "buyer_risk": RiskLevel.HIGH,
+            "seller_risk": RiskLevel.MEDIUM,
+            "market_benchmark": "Best practice: lock-in terminates on IPO or qualified liquidity event.",
+        },
+    ],
+    ClauseType.INFORMATION_RIGHTS: [
+        {
+            "category": "information_scope",
+            "description": "Information rights too narrow — investor lacks visibility into financial and operational performance",
+            "investor_risk": RiskLevel.HIGH,
+            "promoter_risk": RiskLevel.LOW,
+            "buyer_risk": RiskLevel.HIGH,
+            "seller_risk": RiskLevel.LOW,
+            "market_benchmark": "Standard: monthly MIS, quarterly financials, annual audited, board packs, budget.",
+        },
+        {
+            "category": "audit_rights",
+            "description": "Missing audit rights or right to inspect books — investor reliant on management-prepared information",
+            "investor_risk": RiskLevel.HIGH,
+            "promoter_risk": RiskLevel.LOW,
+            "buyer_risk": RiskLevel.HIGH,
+            "seller_risk": RiskLevel.LOW,
+            "market_benchmark": "Standard for PE: annual audit right with 15-day notice, at investor cost.",
+        },
+        {
+            "category": "information_frequency",
+            "description": "Reporting frequency insufficient for deal size — quarterly only for large investments",
+            "investor_risk": RiskLevel.MEDIUM,
+            "promoter_risk": RiskLevel.INFORMATIONAL,
+            "buyer_risk": RiskLevel.MEDIUM,
+            "seller_risk": RiskLevel.INFORMATIONAL,
+            "market_benchmark": "PE >₹50Cr: monthly MIS expected. Smaller deals: quarterly acceptable.",
+        },
+    ],
+    ClauseType.AFFIRMATIVE_COVENANTS: [
+        {
+            "category": "compliance_covenants",
+            "description": "Missing affirmative covenants on regulatory compliance, statutory filings, and insurance maintenance",
+            "investor_risk": RiskLevel.HIGH,
+            "promoter_risk": RiskLevel.LOW,
+            "buyer_risk": RiskLevel.HIGH,
+            "seller_risk": RiskLevel.LOW,
+            "market_benchmark": "Standard: maintain all licenses, file ROC returns, maintain D&O insurance.",
+        },
+        {
+            "category": "financial_covenants",
+            "description": "Missing financial covenants — no minimum revenue, EBITDA, or working capital requirements",
+            "investor_risk": RiskLevel.HIGH,
+            "promoter_risk": RiskLevel.MEDIUM,
+            "buyer_risk": RiskLevel.HIGH,
+            "seller_risk": RiskLevel.MEDIUM,
+            "market_benchmark": "PE deals: financial covenants tied to business plan projections, with cure periods.",
+        },
+        {
+            "category": "key_man_clause",
+            "description": "No key-man clause — departure of founders/key executives not a trigger event",
+            "investor_risk": RiskLevel.HIGH,
+            "promoter_risk": RiskLevel.MEDIUM,
+            "buyer_risk": RiskLevel.HIGH,
+            "seller_risk": RiskLevel.MEDIUM,
+            "market_benchmark": "Standard in Indian PE: key-man on 2-3 founders, triggers put option or reserved matter.",
+        },
+    ],
+    ClauseType.NEGATIVE_COVENANTS: [
+        {
+            "category": "related_party_restrictions",
+            "description": "Weak related-party transaction restrictions — promoter can extract value without investor consent",
+            "investor_risk": RiskLevel.CRITICAL,
+            "promoter_risk": RiskLevel.LOW,
+            "buyer_risk": RiskLevel.CRITICAL,
+            "seller_risk": RiskLevel.LOW,
+            "market_benchmark": "Standard: all RPTs above ₹25-50L threshold need investor consent. Companies Act S.188.",
+        },
+        {
+            "category": "debt_restrictions",
+            "description": "No restrictions on incurring additional debt — could dilute investor's enterprise value",
+            "investor_risk": RiskLevel.HIGH,
+            "promoter_risk": RiskLevel.MEDIUM,
+            "buyer_risk": RiskLevel.HIGH,
+            "seller_risk": RiskLevel.MEDIUM,
+            "market_benchmark": "Market practice: debt cap at 1-2x EBITDA or specific amount, with investor consent above.",
+        },
+        {
+            "category": "asset_disposal",
+            "description": "No restriction on disposal of material assets outside ordinary course",
+            "investor_risk": RiskLevel.HIGH,
+            "promoter_risk": RiskLevel.LOW,
+            "buyer_risk": RiskLevel.HIGH,
+            "seller_risk": RiskLevel.LOW,
+            "market_benchmark": "Standard: disposal above 5-10% of asset base requires investor approval.",
+        },
+    ],
 }
 
 # Default patterns for clause types without specific rules
@@ -479,14 +712,40 @@ Return as JSON array of findings."""
     ) -> list[AIFinding]:
         """Fallback rule-based analysis when AI client is unavailable.
 
-        Uses DealContext.client_side to pick buyer_risk or seller_risk.
+        Uses DealContext.client_side to pick the right risk perspective:
+        - investor → investor_risk (fallback: buyer_risk)
+        - promoter → promoter_risk (fallback: seller_risk)
+        - buyer → buyer_risk
+        - seller → seller_risk
         """
         patterns = RISK_PATTERNS.get(clause.clause_type, _DEFAULT_PATTERNS)
         findings = []
-        risk_key = "seller_risk" if context.client_side == "seller" else "buyer_risk"
+
+        # Map client_side to risk key with fallback
+        side = context.client_side
+        if side == "investor":
+            risk_key = "investor_risk"
+            fallback_key = "buyer_risk"
+        elif side == "promoter":
+            risk_key = "promoter_risk"
+            fallback_key = "seller_risk"
+        elif side == "seller":
+            risk_key = "seller_risk"
+            fallback_key = "seller_risk"
+        else:
+            risk_key = "buyer_risk"
+            fallback_key = "buyer_risk"
 
         for pattern in patterns:
-            risk_level = pattern.get(risk_key, pattern.get("buyer_risk", RiskLevel.MEDIUM))
+            risk_level = pattern.get(
+                risk_key, pattern.get(fallback_key, RiskLevel.MEDIUM)
+            )
+
+            market_info = pattern.get("market_benchmark", "")
+            market_comparison = (
+                market_info if market_info
+                else "Requires AI analysis for market comparison."
+            )
 
             finding = AIFinding(
                 category=pattern["category"],
@@ -494,7 +753,7 @@ Return as JSON array of findings."""
                 description=pattern["description"],
                 risk_level=risk_level,
                 confidence=0.5,  # low confidence — rules only
-                market_comparison="Requires AI analysis for market comparison.",
+                market_comparison=market_comparison,
             )
             findings.append(finding)
 

@@ -4,10 +4,12 @@ Routing logic (in priority order):
   1. Specialist match: reviewer who specializes in this clause type
   2. Risk-based role: CRITICAL/HIGH → Strategist, MEDIUM → Analyst, LOW → Coordinator
   3. Workload cap: never exceed max_active_reviews
-  4. Load balancing: within candidates, prefer lowest capacity_score
+  4. Time budget: don't assign if estimated review time exceeds remaining budget
+  5. Load balancing: within candidates, prefer lowest capacity_score
 
-Batch-aware routing prefers assigning related clauses to the same reviewer
-for context continuity.
+Time-budget-aware: If a reviewer's time budget is exhausted, work flows to
+the next available team member. Auto-escalation if Coordinator's budget runs
+low on a HIGH item.
 """
 
 from __future__ import annotations
@@ -18,7 +20,36 @@ from src.models.team import Role, TeamMember, ROLE_RISK_ROUTING
 
 
 class ReviewRouter:
-    """Routes clause reviews to team members based on specialization, risk, and workload."""
+    """Routes clause reviews to team members based on specialization, risk, workload, and time budget."""
+
+    def __init__(self, time_budgets: dict[str, float] | None = None):
+        """Initialize router with optional per-reviewer time budgets.
+
+        Args:
+            time_budgets: {reviewer_id: remaining_minutes}. If not provided,
+                         time budget is not considered in routing.
+        """
+        self._time_budgets = time_budgets or {}
+        self._time_used: dict[str, float] = {}
+
+    def update_time_budget(self, reviewer_id: str, remaining_minutes: float) -> None:
+        """Update the remaining time budget for a reviewer."""
+        self._time_budgets[reviewer_id] = remaining_minutes
+
+    def record_time_used(self, reviewer_id: str, minutes: float) -> None:
+        """Record time used by a reviewer."""
+        self._time_used[reviewer_id] = self._time_used.get(reviewer_id, 0.0) + minutes
+        if reviewer_id in self._time_budgets:
+            self._time_budgets[reviewer_id] = max(
+                0, self._time_budgets[reviewer_id] - minutes
+            )
+
+    def has_time_budget(self, member: TeamMember, estimated_minutes: float = 5.0) -> bool:
+        """Check if a team member has enough time budget for a task."""
+        if not self._time_budgets:
+            return True  # No budget tracking → always available
+        remaining = self._time_budgets.get(member.id, float("inf"))
+        return remaining >= estimated_minutes
 
     def assign_reviewer(
         self,
@@ -35,12 +66,19 @@ class ReviewRouter:
         """
         target_role = self._determine_role(clause_review)
 
-        # Filter to members with capacity
+        # Filter to members with capacity and time budget
         available = [
             m for m in team
             if m.is_active and m.active_reviews < m.max_active_reviews
+            and self.has_time_budget(m)
         ]
 
+        if not available:
+            # Relax time budget constraint — fall back to capacity only
+            available = [
+                m for m in team
+                if m.is_active and m.active_reviews < m.max_active_reviews
+            ]
         if not available:
             # All at capacity — fall back to any active member
             available = [m for m in team if m.is_active]

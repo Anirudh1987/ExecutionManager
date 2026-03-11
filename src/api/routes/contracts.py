@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request, UploadFile, File, Form
+from fastapi import APIRouter, Query, Request, UploadFile, File, Form
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from src.models.contract import Contract
@@ -20,6 +21,7 @@ class UploadContractRequest(BaseModel):
     parties: list[str] = []
     raw_text: str
     page_count: int = 0
+    previous_version_id: str = ""  # For negotiation round tracking
 
 
 @router.post("/upload", response_model=dict)
@@ -36,6 +38,7 @@ async def upload_contract(req: UploadContractRequest, request: Request):
         parties=req.parties,
         raw_text=req.raw_text,
         page_count=req.page_count,
+        previous_version_id=req.previous_version_id or None,
     )
     store.save_contract(contract)
 
@@ -159,3 +162,35 @@ async def get_contract(contract_id: str, request: Request):
             for c in contract.clauses
         ],
     }
+
+
+@router.get("/{contract_id}/redline")
+async def export_redline(
+    contract_id: str,
+    request: Request,
+    review_id: str = Query(...),
+):
+    """Export a redlined Word document for a contract review."""
+    store = request.app.state.store
+    contract = store.get_contract(contract_id)
+    review = store.get_review(review_id)
+
+    from src.engine.docx_exporter import export_redline_docx
+
+    # Determine negotiation round
+    deal = store.get_deal(contract.deal_id)
+    round_num = 1
+    if deal:
+        for i, rid in enumerate(deal.review_ids):
+            if rid == review_id:
+                round_num = i + 1
+                break
+
+    docx_bytes = export_redline_docx(
+        contract, review, negotiation_round=round_num
+    )
+    return Response(
+        content=docx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{contract.filename}_redline.docx"'},
+    )

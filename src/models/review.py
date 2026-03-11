@@ -44,6 +44,12 @@ class AIFinding(BaseModel):
     suggested_revision: str = ""
     market_comparison: str = ""  # how this compares to standard M&A terms
     precedent_notes: str = ""  # relevant precedent from past deals
+    # Practical risk validation (false positive filtering)
+    practical_likelihood: float = 1.0  # 0-1, after validation gates
+    suppressed: bool = False  # if gates determine this is noise
+    suppression_reason: str = ""
+    enforceability_note: str = ""
+    ai_validation_reasoning: str = ""
 
 
 class HumanVerdict(str, Enum):
@@ -148,10 +154,13 @@ class DealContext(BaseModel):
     """Business context that influences risk assessment."""
 
     deal_value: float | None = None
-    deal_type: str = ""  # acquisition, merger, asset purchase, etc.
-    client_side: str = "buyer"  # buyer or seller
+    deal_type: str = ""  # acquisition, merger, asset purchase, pe_investment, etc.
+    client_side: str = "buyer"  # investor, promoter, buyer, seller
     jurisdiction: str = ""
     industry: str = ""
+    deal_structure: str = ""  # SHA, SPA, APA, merger_scheme
+    negotiation_round: int = 1
+    time_budget_minutes: float = 540.0  # 9 hours per person default
 
 
 class Review(BaseModel):

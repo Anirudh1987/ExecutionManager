@@ -144,6 +144,22 @@ async def submit_verdict(
     # Feed the learning loop
     feedback.record_feedback(clause_review)
 
+    # Check for cascade warnings
+    cascade_warnings = []
+    if req.suggested_language:
+        store = request.app.state.store
+        review = store.get_review(review_id)
+        contract = store.get_contract(review.contract_id)
+        clause = next(
+            (c for c in contract.clauses if c.id == clause_review.clause_id), None
+        ) if contract else None
+        if clause:
+            from src.engine.cross_clause_analyzer import CrossClauseAnalyzer
+            analyzer = CrossClauseAnalyzer()
+            cascade_warnings = analyzer.analyze_cascade(
+                clause.clause_type, contract.clauses
+            )
+
     return {
         "clause_review_id": clause_review.id,
         "stage": clause_review.stage.value,
@@ -152,6 +168,7 @@ async def submit_verdict(
             if clause_review.final_risk_level
             else None
         ),
+        "cascade_warnings": cascade_warnings,
     }
 
 
@@ -228,3 +245,10 @@ async def my_review_queue(review_id: str, reviewer_id: str, request: Request):
             for cr in my_items
         ],
     }
+
+
+@router.get("/{review_id}/time-dashboard")
+async def time_dashboard(review_id: str, request: Request):
+    """Get time budget dashboard for a review."""
+    pipeline = request.app.state.pipeline
+    return pipeline.get_time_dashboard(review_id)

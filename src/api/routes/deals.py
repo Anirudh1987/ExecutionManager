@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Request, Query
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from pydantic import BaseModel
 
 from src.models.deal import Deal, DealStatus
+from src.models.review import DealContext
 
 router = APIRouter()
 
@@ -16,6 +17,10 @@ class CreateDealRequest(BaseModel):
     client_name: str
     deal_type: str = ""
     deal_value: str = ""
+    client_side: str = "investor"  # investor, promoter, buyer, seller
+    industry: str = ""
+    jurisdiction: str = "india"
+    deal_structure: str = ""  # SHA, SPA, APA, merger_scheme
     description: str = ""
 
 
@@ -27,6 +32,10 @@ async def create_deal(req: CreateDealRequest, request: Request):
         client_name=req.client_name,
         deal_type=req.deal_type,
         deal_value=req.deal_value,
+        client_side=req.client_side,
+        industry=req.industry,
+        jurisdiction=req.jurisdiction,
+        deal_structure=req.deal_structure,
         description=req.description,
     )
     store.save_deal(deal)
@@ -89,7 +98,22 @@ async def generate_advisory(deal_id: str, request: Request):
     deal = store.get_deal(deal_id)
     contracts = store.get_contracts_for_deal(deal_id)
     reviews = store.get_reviews_for_deal(deal_id)
-    result = await advisory_gen.generate_advisory(deal, contracts, reviews)
+    # Build DealContext from deal fields
+    deal_value = None
+    if deal.deal_value:
+        try:
+            deal_value = float(deal.deal_value.replace("$", "").replace(",", "").replace("₹", ""))
+        except ValueError:
+            pass
+    deal_context = DealContext(
+        deal_value=deal_value,
+        deal_type=deal.deal_type,
+        client_side=deal.client_side,
+        jurisdiction=deal.jurisdiction,
+        industry=deal.industry,
+        deal_structure=deal.deal_structure,
+    )
+    result = await advisory_gen.generate_advisory(deal, contracts, reviews, deal_context)
     store.save_deal(deal)
     deal.status = DealStatus.ADVISORY_DRAFTING
     store.save_deal(deal)
@@ -100,9 +124,9 @@ async def generate_advisory(deal_id: str, request: Request):
 async def export_advisory(
     deal_id: str,
     request: Request,
-    format: str = Query("markdown", regex="^(markdown|html)$"),
+    format: str = Query("markdown", regex="^(markdown|html|docx)$"),
 ):
-    """Export advisory as Markdown or HTML document."""
+    """Export advisory as Markdown, HTML, or Word document."""
     store = request.app.state.store
     advisory_gen = request.app.state.advisory
     exporter = request.app.state.exporter
@@ -110,11 +134,64 @@ async def export_advisory(
     deal = store.get_deal(deal_id)
     contracts = store.get_contracts_for_deal(deal_id)
     reviews = store.get_reviews_for_deal(deal_id)
-    advisory_data = await advisory_gen.generate_advisory(deal, contracts, reviews)
 
-    if format == "html":
+    # Build DealContext
+    deal_value = None
+    if deal.deal_value:
+        try:
+            deal_value = float(deal.deal_value.replace("$", "").replace(",", "").replace("₹", ""))
+        except ValueError:
+            pass
+    deal_context = DealContext(
+        deal_value=deal_value,
+        deal_type=deal.deal_type,
+        client_side=deal.client_side,
+        jurisdiction=deal.jurisdiction,
+        industry=deal.industry,
+        deal_structure=deal.deal_structure,
+    )
+
+    advisory_data = await advisory_gen.generate_advisory(deal, contracts, reviews, deal_context)
+
+    if format == "docx":
+        from src.engine.docx_exporter import export_advisory_docx
+        docx_bytes = export_advisory_docx(deal, advisory_data, contracts, deal_context)
+        return Response(
+            content=docx_bytes,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f'attachment; filename="{deal.name}_advisory.docx"'},
+        )
+    elif format == "html":
         content = exporter.export_html(deal, advisory_data)
         return HTMLResponse(content=content)
     else:
         content = exporter.export_markdown(deal, advisory_data)
         return PlainTextResponse(content=content)
+
+
+@router.get("/{deal_id}/negotiation-history")
+async def get_negotiation_history(deal_id: str, request: Request):
+    """Get negotiation round history for a deal."""
+    store = request.app.state.store
+    deal = store.get_deal(deal_id)
+
+    # Gather all reviews and their contract versions
+    rounds = []
+    for i, review_id in enumerate(deal.review_ids):
+        review = store.get_review(review_id)
+        if review:
+            contract = store.get_contract(review.contract_id)
+            round_info = {
+                "round_number": i + 1,
+                "review_id": review.id,
+                "contract_id": review.contract_id,
+                "contract_title": contract.title if contract else "",
+                "clauses_reviewed": len(review.clause_reviews),
+                "critical_findings": review.critical_findings_count,
+                "progress": review.progress,
+                "started_at": review.created_at.isoformat() if review.created_at else None,
+                "completed_at": review.completed_at.isoformat() if review.completed_at else None,
+            }
+            rounds.append(round_info)
+
+    return {"deal_id": deal_id, "total_rounds": len(rounds), "rounds": rounds}

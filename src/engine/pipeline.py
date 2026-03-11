@@ -2,8 +2,12 @@
 
 Flow:
   Upload → Extract Clauses → Staged AI Analysis (critical-first) →
-  Cross-Clause Check → Batch & Route to Humans → Collect Verdicts →
-  Capture Precedents → Generate Advisory
+  Practical Risk Filter → Cross-Clause Check → Batch & Route to Humans →
+  Collect Verdicts → Capture Precedents → Generate Advisory
+
+Round-aware: If contract has previous_version_id, the pipeline diffs against
+the prior version and only routes changed clauses to human review. Unchanged
+clauses carry forward their previous verdicts.
 
 The pipeline is the central coordinator. It doesn't do analysis itself;
 it delegates to the extractor, analyzer, router, and cross-clause analyzer.
@@ -29,6 +33,8 @@ from src.engine.clause_extractor import extract_clauses
 from src.engine.analyzer import ClauseAnalyzer, CRITICAL_CLAUSE_TYPES
 from src.engine.router import ReviewRouter
 from src.engine.cross_clause_analyzer import CrossClauseAnalyzer
+from src.engine.practical_risk_filter import PracticalRiskFilter
+from src.engine.time_estimator import TimeEstimator
 from src.services.store import Store
 from src.services.precedent_library import PrecedentEntry, PrecedentLibrary
 from src.services.time_tracker import TimeTracker
@@ -45,6 +51,10 @@ _BATCH_GROUPS: list[set[ClauseType]] = [
     {ClauseType.GOVERNING_LAW, ClauseType.DISPUTE_RESOLUTION},
     {ClauseType.INTELLECTUAL_PROPERTY, ClauseType.CONFIDENTIALITY},
     {ClauseType.TAX, ClauseType.PURCHASE_PRICE},
+    # India-specific batch groups
+    {ClauseType.ANTI_DILUTION, ClauseType.PURCHASE_PRICE},
+    {ClauseType.TAG_ALONG_DRAG_ALONG, ClauseType.ROFR_ROFO, ClauseType.LOCK_IN},
+    {ClauseType.RESERVED_MATTERS, ClauseType.NEGATIVE_COVENANTS, ClauseType.AFFIRMATIVE_COVENANTS},
 ]
 
 
@@ -59,6 +69,8 @@ class ReviewPipeline:
         cross_clause_analyzer: CrossClauseAnalyzer | None = None,
         precedent_library: PrecedentLibrary | None = None,
         time_tracker: TimeTracker | None = None,
+        risk_filter: PracticalRiskFilter | None = None,
+        time_estimator: TimeEstimator | None = None,
         ws_manager=None,
     ):
         self._store = store
@@ -67,6 +79,8 @@ class ReviewPipeline:
         self._cross_clause = cross_clause_analyzer or CrossClauseAnalyzer()
         self._precedents = precedent_library
         self._time_tracker = time_tracker
+        self._risk_filter = risk_filter
+        self._time_estimator = time_estimator or TimeEstimator()
         self._ws_manager = ws_manager
 
     async def start_review(
@@ -118,6 +132,36 @@ class ReviewPipeline:
         all_clause_reviews = list(critical_reviews) + list(other_reviews)
         for cr in all_clause_reviews:
             cr.review_id = review.id
+
+        # Step 3b: Apply practical risk filter (gates 1-5 sync, gate 6 if AI available)
+        if self._risk_filter:
+            for cr in all_clause_reviews:
+                clause = next((c for c in clauses if c.id == cr.clause_id), None)
+                if clause and cr.ai_findings:
+                    cr.ai_findings = self._risk_filter.validate_findings_sync(
+                        cr.ai_findings, clause, context
+                    )
+                    # Recalculate aggregate risk after filtering
+                    if cr.ai_findings:
+                        severity_order = [
+                            RiskLevel.CRITICAL, RiskLevel.HIGH, RiskLevel.MEDIUM,
+                            RiskLevel.LOW, RiskLevel.INFORMATIONAL,
+                        ]
+                        cr.ai_risk_level = RiskLevel.INFORMATIONAL
+                        for level in severity_order:
+                            if any(f.risk_level == level for f in cr.ai_findings):
+                                cr.ai_risk_level = level
+                                break
+                    else:
+                        cr.ai_risk_level = RiskLevel.INFORMATIONAL
+
+        # Step 3c: Round-aware — carry forward verdicts for unchanged clauses
+        changed_clause_ids: set[str] | None = None
+        if contract.previous_version_id:
+            changed_clause_ids = self._carry_forward_verdicts(
+                contract, review, all_clause_reviews, clauses
+            )
+
         review.clause_reviews = all_clause_reviews
 
         # Step 4: Cross-clause pattern detection
@@ -391,6 +435,86 @@ class ReviewPipeline:
             "by_risk": by_risk,
             "is_complete": review.completed_at is not None,
         }
+
+    def _carry_forward_verdicts(
+        self,
+        contract: Contract,
+        review: Review,
+        all_clause_reviews: list[ClauseReview],
+        clauses: list,
+    ) -> set[str]:
+        """For Round 2+, carry forward verdicts for unchanged clauses.
+
+        Compares clause titles/types between versions. If a clause is unchanged,
+        copies the previous verdict so humans only review changed/new clauses.
+        Returns set of clause IDs that have changes (need human review).
+        """
+        previous_contract = self._store.get_contract(contract.previous_version_id)
+        if not previous_contract:
+            return set(c.id for c in clauses)
+
+        # Find previous review for the prior contract
+        previous_review = None
+        deal = self._store.get_deal(review.deal_id)
+        if deal:
+            for rid in reversed(deal.review_ids):
+                r = self._store.get_review(rid)
+                if r and r.contract_id == previous_contract.id:
+                    previous_review = r
+                    break
+
+        if not previous_review:
+            return set(c.id for c in clauses)
+
+        # Build a lookup of previous clause reviews by (clause_type, title)
+        prev_cr_lookup: dict[tuple[str, str], ClauseReview] = {}
+        prev_clause_lookup: dict[str, object] = {}
+        for pc in previous_contract.clauses:
+            prev_clause_lookup[pc.id] = pc
+        for pcr in previous_review.clause_reviews:
+            pc = prev_clause_lookup.get(pcr.clause_id)
+            if pc:
+                key = (pc.clause_type.value, pc.title)
+                prev_cr_lookup[key] = pcr
+
+        changed_ids: set[str] = set()
+        for i, cr in enumerate(all_clause_reviews):
+            clause = next((c for c in clauses if c.id == cr.clause_id), None)
+            if not clause:
+                changed_ids.add(cr.clause_id)
+                continue
+
+            key = (clause.clause_type.value, clause.title)
+            prev_cr = prev_cr_lookup.get(key)
+
+            if prev_cr and prev_cr.is_complete:
+                # Check if clause text is substantially the same
+                prev_clause = prev_clause_lookup.get(prev_cr.clause_id)
+                if prev_clause and hasattr(prev_clause, 'text') and prev_clause.text == clause.text:
+                    # Carry forward — clause unchanged
+                    cr.stage = ReviewStage.APPROVED
+                    cr.final_risk_level = prev_cr.final_risk_level
+                    cr.human_annotations = prev_cr.human_annotations
+                    cr.human_completed_at = prev_cr.human_completed_at
+                    continue
+
+            changed_ids.add(cr.clause_id)
+
+        return changed_ids
+
+    def get_time_dashboard(self, review_id: str, deal_context: DealContext | None = None) -> dict:
+        """Get time budget dashboard for a review."""
+        review = self._store.get_review(review_id)
+        team = self._store.get_team_for_deal(review.deal_id)
+        context = deal_context or DealContext()
+
+        contract = self._store.get_contract(review.contract_id)
+        clauses = contract.clauses if contract else []
+        clause_lookup = {c.id: c for c in clauses}
+
+        return self._time_estimator.get_time_dashboard(
+            review.clause_reviews, clause_lookup, team, context
+        )
 
     async def _broadcast(self, deal_id: str, event: dict) -> None:
         """Send event to all connected WebSocket clients for this deal."""

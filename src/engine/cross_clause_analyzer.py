@@ -1,7 +1,8 @@
 """Cross-clause pattern detection — finds risks that span multiple clauses.
 
-14 interaction checks covering all major M&A clause relationships.
+18 interaction checks (14 universal + 4 India-specific) covering all M&A clause relationships.
 Each pattern returns an interaction_score (0-1) and evidence excerpts.
+Includes risk cascade analysis for detecting how changes to one clause affect others.
 """
 
 from __future__ import annotations
@@ -85,7 +86,65 @@ CROSS_CLAUSE_CHECKS = [
         "requires": [ClauseType.GOVERNING_LAW, ClauseType.DISPUTE_RESOLUTION],
         "title": "Governing law consistency with dispute resolution forum",
     },
+    # --- India-specific cross-clause checks ---
+    {
+        "pattern_type": "rofr_vs_tag_along",
+        "requires": [ClauseType.ROFR_ROFO, ClauseType.TAG_ALONG_DRAG_ALONG],
+        "title": "ROFR exercise vs. tag-along/drag-along triggers",
+    },
+    {
+        "pattern_type": "reserved_matters_vs_covenants",
+        "requires": [ClauseType.RESERVED_MATTERS, ClauseType.NEGATIVE_COVENANTS],
+        "title": "Reserved matters alignment with negative covenants",
+    },
+    {
+        "pattern_type": "lock_in_vs_termination",
+        "requires": [ClauseType.LOCK_IN, ClauseType.TERMINATION],
+        "title": "Lock-in carve-outs for termination/default events",
+    },
+    {
+        "pattern_type": "anti_dilution_vs_price",
+        "requires": [ClauseType.ANTI_DILUTION, ClauseType.PURCHASE_PRICE],
+        "title": "Anti-dilution formula alignment with pricing mechanism",
+    },
 ]
+
+# Risk cascade: when a clause changes, which other clauses are potentially affected
+RISK_CASCADE_MAP: dict[ClauseType, list[dict]] = {
+    ClauseType.INDEMNIFICATION: [
+        {"affected": ClauseType.ESCROW, "reason": "Indemnity cap change affects escrow sizing"},
+        {"affected": ClauseType.PURCHASE_PRICE, "reason": "Indemnity terms affect net deal economics"},
+        {"affected": ClauseType.TERMINATION, "reason": "Indemnity changes may affect break-fee rationale"},
+    ],
+    ClauseType.PURCHASE_PRICE: [
+        {"affected": ClauseType.EARNOUT, "reason": "Price change affects earnout thresholds"},
+        {"affected": ClauseType.TAX, "reason": "Price allocation has tax implications"},
+        {"affected": ClauseType.ANTI_DILUTION, "reason": "Price change affects anti-dilution trigger and formula"},
+        {"affected": ClauseType.ESCROW, "reason": "Price change affects escrow percentage"},
+    ],
+    ClauseType.LOCK_IN: [
+        {"affected": ClauseType.TAG_ALONG_DRAG_ALONG, "reason": "Lock-in period affects transfer right timing"},
+        {"affected": ClauseType.ROFR_ROFO, "reason": "Lock-in exceptions must align with ROFR/ROFO triggers"},
+        {"affected": ClauseType.TERMINATION, "reason": "Lock-in release may be tied to termination events"},
+    ],
+    ClauseType.RESERVED_MATTERS: [
+        {"affected": ClauseType.NEGATIVE_COVENANTS, "reason": "Reserved matters should mirror negative covenant restrictions"},
+        {"affected": ClauseType.AFFIRMATIVE_COVENANTS, "reason": "Affirmative obligations may conflict with reserved matters"},
+    ],
+    ClauseType.ANTI_DILUTION: [
+        {"affected": ClauseType.PURCHASE_PRICE, "reason": "Anti-dilution adjustment affects effective price per share"},
+        {"affected": ClauseType.REPRESENTATIONS_WARRANTIES, "reason": "Anti-dilution may require updated cap table reps"},
+    ],
+    ClauseType.NON_COMPETE: [
+        {"affected": ClauseType.EMPLOYEE_MATTERS, "reason": "Non-compete scope affects key employee restrictions"},
+        {"affected": ClauseType.TERMINATION, "reason": "Non-compete may need carve-out on termination for cause"},
+    ],
+    ClauseType.TERMINATION: [
+        {"affected": ClauseType.CONFIDENTIALITY, "reason": "Confidentiality survival after termination"},
+        {"affected": ClauseType.LOCK_IN, "reason": "Termination may release lock-in obligations"},
+        {"affected": ClauseType.NON_COMPETE, "reason": "Termination may affect non-compete enforceability"},
+    ],
+}
 
 
 class CrossClauseAnalyzer:
@@ -724,6 +783,219 @@ class CrossClauseAnalyzer:
             recommendation="Governing law jurisdiction should be consistent with the dispute resolution forum. Arbitration agreements should specify their own governing law.",
         )
 
+    # --- 4 India-specific cross-clause checks ---
+
+    def _check_rofr_vs_tag_along(
+        self, title: str, clauses: list[Clause], reviews: dict
+    ) -> CrossClausePattern | None:
+        rofr = [c for c in clauses if c.clause_type == ClauseType.ROFR_ROFO]
+        tag = [c for c in clauses if c.clause_type == ClauseType.TAG_ALONG_DRAG_ALONG]
+
+        if not rofr or not tag:
+            return None
+
+        rofr_text = " ".join(c.text.lower() for c in rofr)
+        tag_text = " ".join(c.text.lower() for c in tag)
+        issues = []
+        score = 0.0
+
+        # ROFR exercise should not block tag-along rights
+        if "tag" not in rofr_text and "tag-along" not in rofr_text:
+            issues.append("ROFR clause does not address interaction with tag-along rights — potential conflict on transfer")
+            score += 0.5
+
+        # Drag-along should override ROFR
+        if "drag" in tag_text and "rofr" not in tag_text and "right of first" not in tag_text:
+            issues.append("Drag-along provision does not explicitly override ROFR — may create deadlock on exit")
+            score += 0.5
+
+        # Check if ROFR timeline conflicts with tag-along exercise period
+        rofr_days = re.search(r'(\d+)\s*(?:day|business day)', rofr_text)
+        tag_days = re.search(r'(\d+)\s*(?:day|business day)', tag_text)
+        if rofr_days and tag_days:
+            r_days = int(rofr_days.group(1))
+            t_days = int(tag_days.group(1))
+            if r_days + t_days > 90:
+                issues.append(f"Combined ROFR ({r_days}d) + tag-along ({t_days}d) exercise period of {r_days + t_days} days may deter third-party buyers")
+                score += 0.3
+
+        if not issues:
+            return None
+
+        return CrossClausePattern(
+            pattern_type="rofr_vs_tag_along",
+            title=title,
+            description="; ".join(issues),
+            clauses_involved=[c.id for c in clauses],
+            risk_level=RiskLevel.HIGH,
+            interaction_score=min(1.0, score),
+            evidence=[],
+            recommendation="ROFR should explicitly carve out drag-along transfers. Combined ROFR + tag-along timelines should not exceed 60-75 days to maintain deal viability.",
+        )
+
+    def _check_reserved_matters_vs_covenants(
+        self, title: str, clauses: list[Clause], reviews: dict
+    ) -> CrossClausePattern | None:
+        reserved = [c for c in clauses if c.clause_type == ClauseType.RESERVED_MATTERS]
+        neg_cov = [c for c in clauses if c.clause_type == ClauseType.NEGATIVE_COVENANTS]
+
+        if not reserved or not neg_cov:
+            return None
+
+        reserved_text = " ".join(c.text.lower() for c in reserved)
+        neg_text = " ".join(c.text.lower() for c in neg_cov)
+        issues = []
+        score = 0.0
+
+        # Overlap check: both should cover related party transactions
+        rpt_in_reserved = "related party" in reserved_text or "related-party" in reserved_text
+        rpt_in_neg = "related party" in neg_text or "related-party" in neg_text
+        if rpt_in_reserved and not rpt_in_neg:
+            issues.append("Related party transactions in reserved matters but not in negative covenants — gap in enforcement mechanism")
+            score += 0.4
+        elif rpt_in_neg and not rpt_in_reserved:
+            issues.append("Related party restrictions in negative covenants but not reserved matters — investor lacks veto")
+            score += 0.4
+
+        # Debt restrictions should be consistent
+        debt_in_reserved = "debt" in reserved_text or "borrow" in reserved_text
+        debt_in_neg = "debt" in neg_text or "borrow" in neg_text
+        if debt_in_reserved != debt_in_neg:
+            issues.append("Debt/borrowing restrictions are inconsistent between reserved matters and negative covenants")
+            score += 0.3
+
+        if not issues:
+            return None
+
+        return CrossClausePattern(
+            pattern_type="reserved_matters_vs_covenants",
+            title=title,
+            description="; ".join(issues),
+            clauses_involved=[c.id for c in clauses],
+            risk_level=RiskLevel.HIGH,
+            interaction_score=min(1.0, score),
+            evidence=[],
+            recommendation="Reserved matters and negative covenants should be aligned — reserved matters provide investor veto, negative covenants provide contractual prohibition. Both should cover the same material items.",
+        )
+
+    def _check_lock_in_vs_termination(
+        self, title: str, clauses: list[Clause], reviews: dict
+    ) -> CrossClausePattern | None:
+        lock_in = [c for c in clauses if c.clause_type == ClauseType.LOCK_IN]
+        term = [c for c in clauses if c.clause_type == ClauseType.TERMINATION]
+
+        if not lock_in or not term:
+            return None
+
+        lock_text = " ".join(c.text.lower() for c in lock_in)
+        term_text = " ".join(c.text.lower() for c in term)
+        issues = []
+        score = 0.0
+
+        # Lock-in should have exceptions for material breach / default
+        if "breach" not in lock_text and "default" not in lock_text:
+            issues.append("Lock-in has no carve-out for material breach or event of default — party locked in even if counterparty breaches")
+            score += 0.5
+
+        # Check if termination addresses lock-in release
+        if "lock" not in term_text and "transfer restriction" not in term_text:
+            issues.append("Termination provisions do not address release of lock-in/transfer restrictions")
+            score += 0.3
+
+        # IPO carve-out
+        if "ipo" not in lock_text and "public offering" not in lock_text:
+            issues.append("Lock-in has no IPO carve-out — may conflict with SEBI lock-in requirements")
+            score += 0.3
+
+        if not issues:
+            return None
+
+        return CrossClausePattern(
+            pattern_type="lock_in_vs_termination",
+            title=title,
+            description="; ".join(issues),
+            clauses_involved=[c.id for c in clauses],
+            risk_level=RiskLevel.HIGH,
+            interaction_score=min(1.0, score),
+            evidence=[],
+            recommendation="Lock-in should have carve-outs for material breach, IPO, and termination events. Termination provisions should specify lock-in release mechanics.",
+        )
+
+    def _check_anti_dilution_vs_price(
+        self, title: str, clauses: list[Clause], reviews: dict
+    ) -> CrossClausePattern | None:
+        anti_dil = [c for c in clauses if c.clause_type == ClauseType.ANTI_DILUTION]
+        price = [c for c in clauses if c.clause_type == ClauseType.PURCHASE_PRICE]
+
+        if not anti_dil or not price:
+            return None
+
+        anti_text = " ".join(c.text.lower() for c in anti_dil)
+        price_text = " ".join(c.text.lower() for c in price)
+        issues = []
+        score = 0.0
+
+        # Anti-dilution formula should reference the original subscription price
+        if "subscription price" not in anti_text and "issue price" not in anti_text and "original price" not in anti_text:
+            issues.append("Anti-dilution formula does not clearly reference the original subscription/issue price from the pricing clause")
+            score += 0.4
+
+        # Check if price includes provisions for anti-dilution adjustment
+        if "anti-dilution" not in price_text and "adjustment" not in price_text:
+            issues.append("Purchase price clause does not contemplate anti-dilution adjustments to effective price")
+            score += 0.3
+
+        # Check formula type alignment
+        if "weighted average" in anti_text and "per share" not in price_text:
+            issues.append("Anti-dilution uses weighted average formula but pricing clause lacks clear per-share price for formula input")
+            score += 0.3
+
+        if not issues:
+            return None
+
+        return CrossClausePattern(
+            pattern_type="anti_dilution_vs_price",
+            title=title,
+            description="; ".join(issues),
+            clauses_involved=[c.id for c in clauses],
+            risk_level=RiskLevel.HIGH,
+            interaction_score=min(1.0, score),
+            evidence=[],
+            recommendation="Anti-dilution formula should clearly reference subscription price from the pricing clause. Price clause should contemplate adjustments for anti-dilution triggers.",
+        )
+
+    # --- Risk Cascade Analysis ---
+
+    def analyze_cascade(
+        self,
+        changed_clause_type: ClauseType,
+        clauses: list[Clause],
+    ) -> list[dict]:
+        """Identify which clauses may be affected by a change to one clause type.
+
+        Returns a list of cascade warnings with affected clause type, reason, and clause IDs.
+        """
+        cascade_entries = RISK_CASCADE_MAP.get(changed_clause_type, [])
+        warnings = []
+
+        clause_by_type: dict[ClauseType, list[Clause]] = {}
+        for c in clauses:
+            clause_by_type.setdefault(c.clause_type, []).append(c)
+
+        for entry in cascade_entries:
+            affected_type = entry["affected"]
+            if affected_type in clause_by_type:
+                affected_clauses = clause_by_type[affected_type]
+                warnings.append({
+                    "changed_clause_type": changed_clause_type.value,
+                    "affected_clause_type": affected_type.value,
+                    "reason": entry["reason"],
+                    "affected_clause_ids": [c.id for c in affected_clauses],
+                    "affected_sections": [c.section_reference for c in affected_clauses if c.section_reference],
+                })
+
+        return warnings
+
     def _generic_check(
         self, pattern_type: str, title: str, clauses: list[Clause], reviews: dict
     ) -> CrossClausePattern | None:
@@ -777,10 +1049,13 @@ def _extract_context(text: str, keyword: str, window: int = 80) -> str:
 
 
 def _extract_jurisdictions(text: str) -> set[str]:
-    """Extract jurisdiction/state names from text."""
+    """Extract jurisdiction/city names from text."""
     jurisdictions = {
         "delaware", "new york", "california", "texas", "england",
         "singapore", "hong kong", "illinois", "nevada", "florida",
+        # Indian jurisdictions
+        "mumbai", "delhi", "bangalore", "bengaluru", "chennai",
+        "hyderabad", "kolkata", "pune", "ahmedabad", "india",
     }
     found = set()
     for j in jurisdictions:

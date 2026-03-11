@@ -247,6 +247,39 @@ def _infer_clause_type(title: str, text: str) -> ClauseType:
         ClauseType.ESCROW: [
             "escrow", "holdback",
         ],
+        # India-specific M&A clause types
+        ClauseType.ANTI_DILUTION: [
+            "anti-dilution", "anti dilution", "weighted average",
+            "full ratchet", "price protection",
+        ],
+        ClauseType.TAG_ALONG_DRAG_ALONG: [
+            "tag along", "tag-along", "drag along", "drag-along",
+            "co-sale", "bring along",
+        ],
+        ClauseType.RESERVED_MATTERS: [
+            "reserved matter", "affirmative vote", "investor consent",
+            "promoter consent", "veto right", "prior written consent",
+        ],
+        ClauseType.ROFR_ROFO: [
+            "right of first refusal", "rofr", "right of first offer",
+            "rofo", "pre-emptive right", "pre emptive",
+        ],
+        ClauseType.LOCK_IN: [
+            "lock-in", "lock in period", "minimum holding",
+            "restriction on transfer", "holding period",
+        ],
+        ClauseType.INFORMATION_RIGHTS: [
+            "information right", "inspection right", "audit right",
+            "board observer", "board seat", "nominee director",
+        ],
+        ClauseType.AFFIRMATIVE_COVENANTS: [
+            "affirmative covenant", "shall ensure", "shall maintain",
+            "positive covenant",
+        ],
+        ClauseType.NEGATIVE_COVENANTS: [
+            "negative covenant", "shall not without", "restricted action",
+            "restrictive covenant",
+        ],
     }
 
     for clause_type, keywords in type_keywords.items():

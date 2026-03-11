@@ -4,18 +4,20 @@ After all clauses are reviewed, this module generates:
 1. Overall deal recommendation (proceed / negotiate / walk_away)
 2. Executive summary with decision framework
 3. Prioritized key risks with recommendations
-4. Negotiation priority matrix
+4. Negotiation playbook (opening/fallback/walk-away per issue)
 5. Financial exposure estimate
 6. Cross-clause risk narrative
-7. Timeline risks
+7. Timeline risks + regulatory approval sequencing
 8. Deal-breakers
+9. Missing clause detection
+10. Perspective-aware language (investor vs promoter)
 """
 
 from __future__ import annotations
 
 import re
 
-from src.models.contract import Contract
+from src.models.contract import ClauseType, Contract
 from src.models.deal import Deal
 from src.models.review import (
     Review,
@@ -24,6 +26,32 @@ from src.models.review import (
     CrossClausePattern,
     DealContext,
 )
+from src.engine.market_benchmarks import detect_missing_clauses, INDIA_MARKET_BENCHMARKS
+from src.engine.india_regulatory import (
+    get_applicable_regulatory_checks,
+    get_approval_sequence,
+    get_industry_risks,
+)
+
+# Perspective-aware language templates
+_PERSPECTIVE_LANGUAGE = {
+    "investor": {
+        "indemnity_cap_low": "This cap limits your downside recovery to {pct}% of invested capital",
+        "non_compete_broad": "Broad non-compete protects your investment in the target company",
+        "reserved_matters_narrow": "Insufficient reserved matters may leave you without veto over critical decisions",
+        "anti_dilution_weak": "Weak anti-dilution protection exposes your stake to dilution in future down rounds",
+        "information_rights_narrow": "Limited information rights reduce your visibility into portfolio company performance",
+        "exit_concern": "This provision may limit your exit options and liquidity timeline",
+    },
+    "promoter": {
+        "indemnity_cap_low": "Low indemnity cap limits your post-closing exposure — favorable",
+        "non_compete_broad": "Broad non-compete restricts your ability to pursue other business opportunities",
+        "reserved_matters_broad": "Expansive reserved matters effectively transfer day-to-day control to the investor",
+        "drag_along_low": "Low drag-along threshold allows a minority investor to force a sale against your interest",
+        "lock_in_long": "Long lock-in period restricts your ability to monetize your stake",
+        "control_concern": "This provision may dilute your operational control over the company",
+    },
+}
 
 
 class AdvisoryGenerator:
@@ -74,13 +102,31 @@ class AdvisoryGenerator:
             all_clause_reviews, clause_lookup, deal_context
         )
 
+        # New: Missing clause detection
+        clause_types_present = set()
+        for contract in contracts:
+            for clause in contract.clauses:
+                clause_types_present.add(clause.clause_type)
+        missing_clauses = self._detect_missing_clauses(
+            clause_types_present, deal_context
+        )
+
+        # New: Regulatory checks and approval sequence
+        regulatory_info = self._build_regulatory_section(deal_context)
+
+        # New: Negotiation playbook with opening/fallback/walk-away
+        negotiation_playbook = self._build_negotiation_playbook(
+            all_clause_reviews, clause_lookup, deal_context
+        )
+
         # Overall recommendation
         recommendation, rationale = self._determine_recommendation(
             critical, high, deal_breakers, all_clause_reviews
         )
 
         executive_summary = self._build_executive_summary(
-            deal, all_clause_reviews, key_risks, deal_breakers, recommendation
+            deal, all_clause_reviews, key_risks, deal_breakers, recommendation,
+            deal_context, missing_clauses,
         )
 
         # Update deal with advisory content
@@ -100,12 +146,15 @@ class AdvisoryGenerator:
             "executive_summary": executive_summary,
             "financial_exposure": financial_exposure,
             "negotiation_priority_matrix": negotiation_matrix,
+            "negotiation_playbook": negotiation_playbook,
             "key_risks": key_risks,
             "cross_clause_risks": cross_clause_risks,
             "timeline_risks": timeline_risks,
             "recommendations": recommendations,
             "negotiation_points": negotiation_points,
             "deal_breakers": deal_breakers,
+            "missing_clauses": missing_clauses,
+            "regulatory": regulatory_info,
             "risk_distribution": self._risk_distribution(all_clause_reviews),
             "total_clauses_reviewed": len(all_clause_reviews),
             "human_override_rate": self._human_override_rate(all_clause_reviews),
@@ -373,6 +422,8 @@ class AdvisoryGenerator:
         key_risks: list[str],
         deal_breakers: list[str],
         recommendation: str,
+        deal_context: DealContext | None = None,
+        missing_clauses: list[dict] | None = None,
     ) -> str:
         total = len(all_reviews)
         critical_count = sum(
@@ -406,7 +457,181 @@ class AdvisoryGenerator:
             for risk in key_risks[:5]:
                 summary += f"  • {risk}\n"
 
+        # Add perspective context
+        if deal_context and deal_context.client_side:
+            perspective = deal_context.client_side
+            summary += f"\nPerspective: {perspective.upper()}\n"
+            if perspective == "investor":
+                summary += "Focus: downside protection, information rights, exit optionality, anti-dilution.\n"
+            elif perspective == "promoter":
+                summary += "Focus: operational control preservation, lock-in flexibility, drag-along protection.\n"
+
+        # Add missing clauses warning
+        if missing_clauses:
+            critical_missing = [m for m in missing_clauses if m.get("severity") == "must_have"]
+            if critical_missing:
+                summary += f"\nMISSING CLAUSES ({len(critical_missing)} critical gaps):\n"
+                for m in critical_missing:
+                    summary += f"  • {m['clause_type']}: {m['rationale']}\n"
+
         return summary
+
+    def _detect_missing_clauses(
+        self,
+        clause_types_present: set[ClauseType],
+        deal_context: DealContext | None,
+    ) -> list[dict]:
+        """Detect clauses that should be present but are missing, based on deal type."""
+        if not deal_context or not deal_context.deal_type:
+            return []
+
+        missing = detect_missing_clauses(clause_types_present, deal_context.deal_type)
+        return missing
+
+    def _build_regulatory_section(
+        self, deal_context: DealContext | None
+    ) -> dict:
+        """Build regulatory checks and approval sequence for the advisory."""
+        if not deal_context:
+            return {"checks": [], "approval_sequence": [], "industry_risks": []}
+
+        # Gather regulatory checks across all relevant clause types
+        all_checks = []
+        seen = set()
+        for ct in ClauseType:
+            for check in get_applicable_regulatory_checks(ct, deal_context):
+                check_id = check.get("check_id", check.get("title", ""))
+                if check_id not in seen:
+                    seen.add(check_id)
+                    all_checks.append(check)
+
+        approval_seq = get_approval_sequence(deal_context.deal_type)
+        raw_industry = get_industry_risks(deal_context.industry)
+
+        # Normalize industry risks into a list of dicts for consistent output
+        industry_risks = []
+        if raw_industry:
+            regulators = raw_industry.get("regulators", [])
+            for risk_desc in raw_industry.get("key_risks", []):
+                industry_risks.append({
+                    "regulator": ", ".join(regulators),
+                    "description": risk_desc,
+                })
+
+        return {
+            "checks": all_checks,
+            "approval_sequence": approval_seq,
+            "industry_risks": industry_risks,
+        }
+
+    def _build_negotiation_playbook(
+        self,
+        all_reviews: list[ClauseReview],
+        clause_lookup: dict,
+        deal_context: DealContext | None,
+    ) -> list[dict]:
+        """Build negotiation playbook with opening/fallback/walk-away per issue.
+
+        Each item includes strategic positions and potential trade-offs.
+        """
+        playbook = []
+        context = deal_context or DealContext()
+        perspective = context.client_side or "buyer"
+
+        for cr in all_reviews:
+            clause = clause_lookup.get(cr.clause_id)
+            if not clause:
+                continue
+
+            for finding in cr.ai_findings:
+                if finding.risk_level not in (RiskLevel.CRITICAL, RiskLevel.HIGH, RiskLevel.MEDIUM):
+                    continue
+                if not finding.suggested_revision:
+                    continue
+
+                # Determine positions based on risk level
+                item: dict = {
+                    "issue": f"[{clause.section_reference}] {finding.title}",
+                    "clause_type": clause.clause_type.value,
+                    "risk_level": finding.risk_level.value,
+                    "priority": "must_have" if finding.risk_level in (RiskLevel.CRITICAL, RiskLevel.HIGH) else "nice_to_have",
+                    "opening_position": finding.suggested_revision,
+                    "fallback_position": "",
+                    "walk_away_point": "",
+                    "market_context": finding.market_comparison or "",
+                    "concession_trade": "",
+                }
+
+                # Generate fallback and walk-away based on clause type and benchmarks
+                benchmark = INDIA_MARKET_BENCHMARKS.get(clause.clause_type.value)
+                if benchmark:
+                    item["fallback_position"] = (
+                        f"Accept market median: {benchmark.get('metric', '')} at "
+                        f"{benchmark.get('median', 'N/A')}"
+                    )
+                    item["walk_away_point"] = (
+                        f"Below p25: {benchmark.get('metric', '')} at "
+                        f"{benchmark.get('p25', 'N/A')}"
+                    )
+
+                # Generate trade suggestions based on perspective
+                item["concession_trade"] = self._suggest_trade(
+                    clause.clause_type, finding.risk_level, perspective
+                )
+
+                # Add perspective-specific framing
+                perspective_note = self._get_perspective_note(
+                    clause.clause_type, perspective, finding
+                )
+                if perspective_note:
+                    item["perspective_note"] = perspective_note
+
+                playbook.append(item)
+
+        # Sort by priority
+        priority_order = {"must_have": 0, "nice_to_have": 1, "concession": 2}
+        playbook.sort(key=lambda x: priority_order.get(x["priority"], 3))
+
+        return playbook
+
+    def _suggest_trade(
+        self, clause_type: ClauseType, risk_level: RiskLevel, perspective: str
+    ) -> str:
+        """Suggest what to trade/concede in exchange for this position."""
+        # Trade suggestion matrix based on clause type relationships
+        trade_map = {
+            ClauseType.INDEMNIFICATION: "Concede on non-compete duration in exchange for higher indemnity cap",
+            ClauseType.NON_COMPETE: "Concede non-compete scope in exchange for stronger indemnification",
+            ClauseType.RESERVED_MATTERS: "Bundle with information rights — concede reporting frequency for reserved matter control",
+            ClauseType.ANTI_DILUTION: "Trade anti-dilution formula for more favorable lock-in terms",
+            ClauseType.TAG_ALONG_DRAG_ALONG: "Link drag-along threshold to minimum pricing guarantee",
+            ClauseType.LOCK_IN: "Concede lock-in duration for IPO/exit event carve-outs",
+            ClauseType.EARNOUT: "Trade earnout metric precision for longer measurement period",
+            ClauseType.PURCHASE_PRICE: "Link price adjustment to escrow mechanism",
+        }
+        return trade_map.get(clause_type, "")
+
+    def _get_perspective_note(
+        self, clause_type: ClauseType, perspective: str, finding
+    ) -> str:
+        """Get perspective-specific framing for a finding."""
+        templates = _PERSPECTIVE_LANGUAGE.get(perspective, {})
+
+        # Map clause type + finding to the appropriate template key
+        key_map = {
+            ClauseType.INDEMNIFICATION: "indemnity_cap_low",
+            ClauseType.NON_COMPETE: "non_compete_broad",
+            ClauseType.RESERVED_MATTERS: "reserved_matters_broad" if perspective == "promoter" else "reserved_matters_narrow",
+            ClauseType.ANTI_DILUTION: "anti_dilution_weak",
+            ClauseType.INFORMATION_RIGHTS: "information_rights_narrow",
+            ClauseType.TAG_ALONG_DRAG_ALONG: "drag_along_low" if perspective == "promoter" else "exit_concern",
+            ClauseType.LOCK_IN: "lock_in_long" if perspective == "promoter" else "exit_concern",
+        }
+
+        template_key = key_map.get(clause_type)
+        if template_key and template_key in templates:
+            return templates[template_key]
+        return ""
 
     def _risk_distribution(self, reviews: list[ClauseReview]) -> dict[str, int]:
         dist: dict[str, int] = {}

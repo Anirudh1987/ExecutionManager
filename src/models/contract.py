@@ -29,6 +29,15 @@ class ClauseType(str, Enum):
     MATERIAL_ADVERSE_CHANGE = "material_adverse_change"
     EARNOUT = "earnout"
     ESCROW = "escrow"
+    # India-specific M&A clause types
+    ANTI_DILUTION = "anti_dilution"
+    TAG_ALONG_DRAG_ALONG = "tag_along_drag_along"
+    RESERVED_MATTERS = "reserved_matters"
+    ROFR_ROFO = "rofr_rofo"
+    LOCK_IN = "lock_in"
+    INFORMATION_RIGHTS = "information_rights"
+    AFFIRMATIVE_COVENANTS = "affirmative_covenants"
+    NEGATIVE_COVENANTS = "negative_covenants"
     OTHER = "other"
 
 
