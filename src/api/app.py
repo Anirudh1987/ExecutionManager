@@ -13,6 +13,7 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from src.api.routes import auth, deals, contracts, reviews, team, analytics, precedents, templates, frontend
@@ -128,6 +129,12 @@ app.include_router(precedents.router, prefix="/precedents", tags=["Precedents"])
 app.include_router(templates.router, prefix="/templates", tags=["Templates"])
 app.include_router(ws_router, tags=["WebSocket"])
 app.include_router(frontend.router, prefix="/app", tags=["Frontend"])
+
+
+@app.get("/", include_in_schema=False)
+async def root():
+    """Redirect root to the web dashboard."""
+    return RedirectResponse(url="/app")
 
 
 @app.get("/health")
